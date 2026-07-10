@@ -10,7 +10,7 @@ body.page {
   max-height: none;
   min-height: 100vh;
   margin: 0 auto;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 /* The page scrolls as a whole; keep the toolbar in reach. */
@@ -23,7 +23,7 @@ body.page header {
 }
 
 body.page h1 {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 body.page #search-row {
@@ -32,7 +32,7 @@ body.page #search-row {
 
 body.page #search {
   padding: 10px 14px;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 /* On the full page the ≈ button appears on row hover only (always visible in
@@ -51,10 +51,15 @@ body.page ul#list {
 }
 
 body.page li.item a {
-  padding: 12px 16px;
+  padding: 14px 18px;
 }
 
 body.page .thumb {
   width: 56px;
   height: 56px;
 }
+
+body.page .title,
+body.page .poster { font-size: 15px; }
+body.page .summary { font-size: 13.5px; line-height: 1.6; }
+body.page .meta { font-size: 12px; }

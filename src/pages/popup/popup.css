@@ -26,7 +26,7 @@ body {
   max-height: 580px;
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  font-size: 13px;
+  font-size: 14px;
   color: var(--fg);
   background: var(--bg);
   display: flex;
@@ -42,7 +42,9 @@ header {
 }
 
 h1 {
-  font-size: 15px;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
@@ -156,7 +158,7 @@ li.item a {
   min-width: 0;
   display: flex;
   gap: 10px;
-  padding: 10px 12px;
+  padding: 13px 14px;
   text-decoration: none;
   color: inherit;
 }
@@ -200,8 +202,8 @@ li.sentinel {
 }
 
 .thumb {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   flex: none;
   border-radius: 6px;
   object-fit: cover;
@@ -222,6 +224,8 @@ li.sentinel {
 
 .title {
   font-weight: 600;
+  font-size: 14px;
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -231,6 +235,7 @@ li.sentinel {
    which have a poster but no title. */
 .poster {
   font-weight: 600;
+  font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -242,6 +247,7 @@ li.sentinel {
 
 .publication {
   color: var(--muted);
+  font-size: 12.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -249,6 +255,8 @@ li.sentinel {
 
 .summary {
   color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
   margin-top: 2px;
   display: -webkit-box;
   -webkit-line-clamp: 4;
@@ -258,7 +266,8 @@ li.sentinel {
 
 .meta {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 11.5px;
+  font-weight: 450;
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
