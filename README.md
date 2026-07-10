@@ -19,7 +19,7 @@ providers later.
    [x.com](https://x.com), [facebook.com](https://www.facebook.com) and/or
    [substack.com](https://substack.com) in the same browser profile.
 6. Click the extension icon, pick the service in the dropdown, and press
-   **Refresh**.
+   **Sync**.
 
 ## How it works
 
@@ -113,17 +113,18 @@ providers later.
   The extension's options page can switch embeddings to a cloud API (OpenAI /
   Gemini / Voyage) via an API key for higher quality; by default nothing
   leaves the machine.
-- Refreshes are **incremental**: the services list saved items newest-first,
+- Syncs are **incremental**: the services list saved items newest-first,
   so syncing stops as soon as it reaches a page it has already stored — a
   typical refresh is 1–2 requests. (Exception: YouTube playlists other than
   Watch Later can be manually reordered, so they are re-walked fully each
-  sync — still cheap at ~100 videos per request.) The **⟳ Full** button re-walks everything
-  (use occasionally to refresh stale titles/snippets/thumbnails). Items you
+  sync — still cheap at ~100 videos per request.) **Options → Developer → Full
+  sync** re-walks everything (use occasionally to refresh stale
+  titles/snippets/thumbnails). Items you
   unsave on the service are kept in the DB — it's an archive, not a mirror.
 - Syncs are saved **page by page**: each fetched page is written to the DB
   before the next request, the popup live-updates while a sync runs, and if
   a sync fails partway (rate limit, dropped session) everything fetched so
-  far is kept — the next refresh resumes from the top and stops at known
+  far is kept — the next sync resumes from the top and stops at known
   items as usual.
 - Because MV3 service workers can't spawn workers or use the synchronous
   OPFS handles SQLite needs, the DB runs in a dedicated worker
@@ -158,8 +159,9 @@ providers later.
   `/shorts/` link) in the playlist data; a Short saved before YouTube added
   that badge may be classified as a plain video.
 - Instagram thumbnail URLs are **signed CDN links that expire** after a
-  while, so thumbnails of old items may stop loading. Run a **⟳ Full** sync
-  to refresh them (the post links themselves never expire).
+  while, so thumbnails of old items may stop loading. Run **Options →
+  Developer → Full sync** to refresh them (the post links themselves never
+  expire).
 - Cloud embedding API keys entered on the options page are stored in
   `chrome.storage.local`, which is **plaintext on the local disk** —
   acceptable for a personal machine, but don't use a key you can't revoke.
@@ -185,12 +187,12 @@ providers later.
   `http://127.0.0.1:5173/` — handy for UI work without loading the extension.
 - **Capture mode** (Options → Developer) changes what a sync does: instead
   of writing items, every raw response page is archived verbatim into the
-  `raw_data` table and the item list is left untouched. The popup then shows
-  a dev row with **Ingest raw** (replay the archive through the parsing
-  pipeline into `saved_items`) and **Clear raw** (drop the archive). This is
+  `raw_data` table and the item list is left untouched. Options → Developer
+  provides **Ingest raw** (replay the archive through the parsing pipeline
+  into `saved_items`) and **Clear raw** (drop the archive). This is
   how you iterate on the parsing/embedding pipeline without re-fetching from
-  the services: capture once, **Export** the DB, then re-run the pipeline on
-  the copy offline with
+  the services: capture once, **Export database** from Options → Developer,
+  then re-run the pipeline on the copy offline with
   `node src/node/tools/ingest.ts linkosh.sqlite [--reingest]`.
   `node src/node/tools/capture-fixtures.ts <db.sqlite>` turns captured pages
   into parser regression fixtures (review and scrub before committing —

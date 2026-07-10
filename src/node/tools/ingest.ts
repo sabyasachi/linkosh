@@ -2,7 +2,7 @@
 // Run the ingest pipeline over a .sqlite copy (usually an extension export)
 // without touching a live service — the no-refetch iteration workflow:
 //
-//   1. In the extension: enable capture mode, sync, Export.
+//   1. In the extension: enable capture mode, sync, then Export database from Options → Developer.
 //   2. Iterate on core/parse/* here:
 //        node src/node/tools/ingest.ts linkosh-export.sqlite            # pending+failed rows
 //        node src/node/tools/ingest.ts linkosh-export.sqlite --reingest # everything, again

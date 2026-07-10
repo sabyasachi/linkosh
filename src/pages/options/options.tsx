@@ -12,11 +12,31 @@ import { createChromePrefs } from "../../ext/chrome-prefs.ts";
 import type { BackgroundApi } from "../../ext/background-service.ts";
 import type { AiSettings, EmbedProviderId, OrchestratorStatus } from "../../core/types.ts";
 import type { PrefsSchema } from "../../core/prefs.ts";
+import type { RawStatsRow } from "../../core/db/raw.ts";
 
 const api = createClient<BackgroundApi>(
   runtimeTransport(chrome.runtime as unknown as RuntimeLike, "background")
 );
 const prefs = createChromePrefs();
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Materialize the worker's OPFS export before deleting its temporary file. */
+async function downloadExport(): Promise<void> {
+  const { file } = await api.exportDb({});
+  const root = await navigator.storage.getDirectory();
+  const handle = await root.getFileHandle(file);
+  const bytes = await (await handle.getFile()).arrayBuffer();
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.sqlite3" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "linkosh.sqlite";
+  a.click();
+  URL.revokeObjectURL(url);
+  await root.removeEntry(file).catch(() => {});
+}
 
 // Origins we need optional host permission for, per cloud provider, so
 // extension-context fetches to the API bypass CORS.
@@ -91,6 +111,10 @@ function OptionsApp() {
   const [aiStatus, setAiStatus] = useState("Loading…");
   const [deleteStatus, setDeleteStatus] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [devAction, setDevAction] = useState<"sync" | "export" | "ingest" | "clear" | "">("");
+  const [devStatus, setDevStatus] = useState("");
+  const [rawStats, setRawStats] = useState<RawStatsRow[]>([]);
+  const [captureMode, setCaptureMode] = useState(false);
   const statusTimer = useRef<ReturnType<typeof setInterval>>();
 
   const refreshStatus = async () => {
@@ -101,15 +125,29 @@ function OptionsApp() {
     }
   };
 
+  const refreshRawStats = async () => {
+    try {
+      const result = await api.rawStats({});
+      setRawStats(result.stats);
+      setCaptureMode(result.captureRaw);
+    } catch {
+      // The action status reports concrete failures; periodic refresh is best-effort.
+    }
+  };
+
   useEffect(() => {
+    const unwatchCaptureMode = prefs.watch("captureRaw", (value) => setCaptureMode(Boolean(value)));
     void (async () => {
       const settings = await prefs.get("ai:settings");
       setEmbedProvider(settings?.embedProvider ?? "local");
       setKeys((prev) => ({ ...prev, ...(settings?.keys ?? {}) }));
-      await refreshStatus();
+      await Promise.all([refreshStatus(), refreshRawStats()]);
     })();
     statusTimer.current = setInterval(() => void refreshStatus(), 2000);
-    return () => clearInterval(statusTimer.current);
+    return () => {
+      clearInterval(statusTimer.current);
+      unwatchCaptureMode();
+    };
   }, []);
 
   const save = async () => {
@@ -156,6 +194,80 @@ function OptionsApp() {
       void refreshStatus();
     }
   };
+
+  const fullSync = async () => {
+    setDevAction("sync");
+    setDevStatus("Full sync in progress — re-fetching every service…");
+    try {
+      const result = await api.syncAll({ full: true });
+      const failures = result.reports.filter((report) => report.status !== "ok");
+      const outcome = result.captured
+        ? `Captured ${result.captured} raw pages.`
+        : `Full sync complete: ${result.inserted} new · ${result.total} total.`;
+      setDevStatus(
+        failures.length
+          ? `${outcome} ${failures.length} service${failures.length === 1 ? "" : "s"} stopped with an error.`
+          : outcome
+      );
+    } catch (error) {
+      setDevStatus(errorText(error));
+    } finally {
+      setDevAction("");
+      void Promise.all([refreshStatus(), refreshRawStats()]);
+    }
+  };
+
+  const exportDatabase = async () => {
+    setDevAction("export");
+    setDevStatus("Preparing database export…");
+    try {
+      await downloadExport();
+      setDevStatus("Database exported.");
+    } catch (error) {
+      setDevStatus(errorText(error));
+    } finally {
+      setDevAction("");
+    }
+  };
+
+  const ingestRaw = async () => {
+    setDevAction("ingest");
+    setDevStatus("Ingesting raw pages…");
+    try {
+      const result = await api.rawIngest({});
+      setDevStatus(
+        `Ingested ${result.ingested} of ${result.pages} raw pages` +
+          (result.failed ? ` · ${result.failed} failed` : "") +
+          ` · ${result.inserted} new items.`
+      );
+    } catch (error) {
+      setDevStatus(errorText(error));
+    } finally {
+      setDevAction("");
+      void Promise.all([refreshStatus(), refreshRawStats()]);
+    }
+  };
+
+  const clearRaw = async () => {
+    if (!confirm("Delete every captured raw page? Items already ingested stay.")) return;
+    setDevAction("clear");
+    setDevStatus("");
+    try {
+      await api.rawClear({});
+      setDevStatus("Raw archive cleared.");
+    } catch (error) {
+      setDevStatus(errorText(error));
+    } finally {
+      setDevAction("");
+      void refreshRawStats();
+    }
+  };
+
+  const rawCount = (status: RawStatsRow["status"]) =>
+    rawStats.filter((row) => row.status === status).reduce((count, row) => count + row.pages, 0);
+  const rawPages = rawStats.reduce((count, row) => count + row.pages, 0);
+  const pendingRaw = rawCount("pending");
+  const failedRaw = rawCount("failed");
 
   return (
     <>
@@ -220,7 +332,7 @@ function OptionsApp() {
       <DevToggle
         prefKey="captureRaw"
         label="Capture mode: archive raw API responses instead of saving items"
-        hint="While on, Refresh/⟳ Full store each response page verbatim in the raw_data table and leave the item list untouched — use “Ingest raw” (in the popup) or tools/ingest.ts (on an export) to run the parsing pipeline over the archive. For developing the pipeline without re-fetching from the services. Takes effect on the next sync."
+        hint="While on, Sync and Full sync store each response page verbatim in raw_data and leave the item list untouched. Use Ingest raw below or tools/ingest.ts on an export to run the parsing pipeline without re-fetching. Takes effect on the next sync."
       />
       <DevToggle
         prefKey="testMode"
@@ -228,13 +340,60 @@ function OptionsApp() {
         hint="For quickly checking a provider works without a heavy fetch from the service (a little more than 100 for providers that walk several lists, e.g. YouTube playlists). Takes effect on the next sync."
       />
 
+      <div class="developer-actions">
+        <button
+          id="full-sync"
+          disabled={Boolean(devAction)}
+          title="Re-fetch every service from the beginning"
+          onClick={() => void fullSync()}
+        >
+          Full sync
+        </button>
+        <button
+          id="export"
+          disabled={Boolean(devAction)}
+          title="Download the database as a .sqlite file"
+          onClick={() => void exportDatabase()}
+        >
+          Export database
+        </button>
+      </div>
+      <p class="hint">
+        Full sync refreshes stale titles and snippets across every service. Export downloads the
+        complete SQLite database.
+      </p>
+
+      <h3>Raw archive</h3>
+      <div id="raw-stats">
+        {`${captureMode ? "Capture mode on" : "Capture mode off"} · ${rawPages} raw pages` +
+          (pendingRaw ? ` · ${pendingRaw} pending` : "") +
+          (failedRaw ? ` · ${failedRaw} failed` : "")}
+      </div>
+      <div class="developer-actions">
+        <button
+          id="ingest-raw"
+          disabled={Boolean(devAction) || pendingRaw + failedRaw === 0}
+          onClick={() => void ingestRaw()}
+        >
+          Ingest raw
+        </button>
+        <button
+          id="clear-raw"
+          disabled={Boolean(devAction) || rawPages === 0}
+          onClick={() => void clearRaw()}
+        >
+          Clear raw
+        </button>
+      </div>
+      <div id="dev-status">{devStatus}</div>
+
       <button id="delete-items" disabled={deleting} onClick={() => void deleteItems()}>
         Delete all saved items
       </button>
       <span id="delete-status">{deleteStatus}</span>
       <p class="hint">
         Removes every row from the item database (embeddings included) and resets each provider's
-        sync state, so the next Refresh re-fetches from scratch. Captured raw pages are not
+        sync state, so the next Sync re-fetches from scratch. Captured raw pages are not
         affected.
       </p>
     </>

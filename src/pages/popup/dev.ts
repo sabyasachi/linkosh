@@ -44,9 +44,6 @@ const localPrefs: Prefs = {
 const runtime: Runtime = {
   api: createClient<BackgroundApi>(httpTransport),
   prefs: localPrefs,
-  async downloadExport() {
-    location.href = "/api/export";
-  },
 };
 
 render(h(App, { runtime }), document.body);

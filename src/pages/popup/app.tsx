@@ -3,12 +3,11 @@
 // imperative popup.js did lives here: provider tabs, infinite scroll, search
 // with mode fallbacks explained, "more like this", sync with live progress,
 // export, and the capture-mode dev row.
-import { h, Fragment, type ComponentChildren } from "../../vendor/preact/preact.js";
+import { h, Fragment } from "../../vendor/preact/preact.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "../../vendor/preact/hooks.js";
 import { formatPoster, formatSynced, hackerNewsCounts, metaParts } from "../../core/format.ts";
 import { FTS_OPERATORS } from "../../core/fts.ts";
 import type { ProviderId, ProviderMeta, SavedItem, SearchMode, SyncReport } from "../../core/types.ts";
-import type { RawStatsRow } from "../../core/db/raw.ts";
 import type { Runtime } from "./runtime.ts";
 
 const ALL = "all"; // pseudo provider id: search/list across every service
@@ -101,8 +100,6 @@ export function App({ runtime }: { runtime: Runtime }) {
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<SearchMode>("fts");
   const [syncing, setSyncing] = useState(false);
-  const [exporting, setExporting] = useState(false);
-  const [devStats, setDevStats] = useState<RawStatsRow[] | null>(null); // null = capture mode off
   const [showSearchRow, setShowSearchRow] = useState(false);
 
   const providerLabels = useMemo(() => new Map(providers.map((p) => [p.id, p.label])), [providers]);
@@ -123,7 +120,7 @@ export function App({ runtime }: { runtime: Runtime }) {
     setStatus({
       text: total
         ? `${total} saved items${lastMeta ? ` · ${formatSynced(lastMeta.syncedAt)}` : ""}`
-        : "No items yet — press Refresh to fetch your saved items.",
+        : "No items yet — press Sync to fetch your saved items.",
     });
   }, []);
 
@@ -194,7 +191,7 @@ export function App({ runtime }: { runtime: Runtime }) {
         if (storedMode && ["hybrid", "fts", "semantic"].includes(storedMode)) {
           setSearchMode(storedMode);
         }
-        await Promise.all([loadItems(choice), refreshDevRow()]);
+        await loadItems(choice);
       } catch (e) {
         setStatus({ text: errorText(e), error: true });
       }
@@ -302,13 +299,9 @@ export function App({ runtime }: { runtime: Runtime }) {
   // ---------- sync ----------
 
   const doSync = useCallback(
-    async (full: boolean) => {
+    async () => {
       setSyncing(true);
-      setStatus({
-        text: full
-          ? "Full sync — re-fetching everything, this can take a while…"
-          : "Checking for new saved items…",
-      });
+      setStatus({ text: "Checking for new saved items…" });
 
       // Pages are saved to the DB as the sync fetches them, so re-render the
       // list periodically to show progress while the sync call is pending.
@@ -334,7 +327,9 @@ export function App({ runtime }: { runtime: Runtime }) {
       try {
         const choice = providerRef.current;
         const report =
-          choice === ALL ? await api.syncAll({ full }) : await api.sync({ provider: choice, full });
+          choice === ALL
+            ? await api.syncAll({ full: false })
+            : await api.sync({ provider: choice, full: false });
         running = false;
         await loadItems();
 
@@ -360,101 +355,12 @@ export function App({ runtime }: { runtime: Runtime }) {
         running = false;
         clearInterval(poll);
         setSyncing(false);
-        void refreshDevRow();
       }
     },
     [api, loadItems, providerLabels]
   );
 
-  // ---------- dev tools (capture mode) ----------
-  // Visible only while the captureRaw setting (options page) is on: syncs
-  // archive raw response pages instead of writing items, and these controls
-  // replay ("Ingest raw") or drop ("Clear raw") the archive.
-
-  const refreshDevRow = useCallback(async () => {
-    const res = await api.rawStats({}).catch(() => null);
-    setDevStats(res?.captureRaw ? res.stats : null);
-  }, [api]);
-
-  const ingestRaw = useCallback(async () => {
-    setStatus({ text: "Ingesting raw pages…" });
-    try {
-      const r = await api.rawIngest({});
-      await loadItems();
-      setStatus({
-        text:
-          `Ingested ${r.ingested} of ${r.pages} raw pages` +
-          (r.failed ? ` (${r.failed} failed — see raw_data.error)` : "") +
-          ` · +${r.inserted} new items`,
-        error: r.failed > 0,
-      });
-    } catch (e) {
-      setStatus({ text: errorText(e), error: true });
-    } finally {
-      void refreshDevRow();
-    }
-  }, [api, loadItems, refreshDevRow]);
-
-  const clearRaw = useCallback(async () => {
-    if (!confirm("Delete every captured raw page? Items already ingested stay.")) return;
-    try {
-      await api.rawClear({});
-      setStatus({ text: "Raw archive cleared." });
-    } catch (e) {
-      setStatus({ text: errorText(e), error: true });
-    }
-    void refreshDevRow();
-  }, [api, refreshDevRow]);
-
-  // ---------- export ----------
-
-  const exportDb = useCallback(async () => {
-    setExporting(true);
-    try {
-      await runtime.downloadExport();
-    } catch (e) {
-      setStatus({ text: errorText(e), error: true });
-    } finally {
-      setExporting(false);
-    }
-  }, [runtime]);
-
   // ---------- render ----------
-
-  const devCount = (statsList: RawStatsRow[], statusName: string) =>
-    statsList.filter((s) => s.status === statusName).reduce((n, s) => n + s.pages, 0);
-
-  let devRow: ComponentChildren = null;
-  if (devStats) {
-    const pending = devCount(devStats, "pending");
-    const failed = devCount(devStats, "failed");
-    const pages = devStats.reduce((n, s) => n + s.pages, 0);
-    devRow = (
-      <div id="dev-row">
-        <span id="raw-stats">
-          {`capture mode · ${pages} raw pages` +
-            (pending ? ` · ${pending} pending` : "") +
-            (failed ? ` · ${failed} failed` : "")}
-        </span>
-        <button
-          id="ingest-raw"
-          title="Replay captured raw pages into the item database"
-          disabled={pending + failed === 0}
-          onClick={() => void ingestRaw()}
-        >
-          Ingest raw
-        </button>
-        <button
-          id="clear-raw"
-          title="Delete every captured raw page"
-          disabled={pages === 0}
-          onClick={() => void clearRaw()}
-        >
-          Clear raw
-        </button>
-      </div>
-    );
-  }
 
   return (
     <>
@@ -481,25 +387,9 @@ export function App({ runtime }: { runtime: Runtime }) {
             id="refresh"
             title="Fetch items saved since the last sync"
             disabled={syncing}
-            onClick={() => void doSync(false)}
+            onClick={() => void doSync()}
           >
-            Refresh
-          </button>
-          <button
-            id="full-sync"
-            title="Re-fetch everything (slow; refreshes stale titles/snippets)"
-            disabled={syncing}
-            onClick={() => void doSync(true)}
-          >
-            ⟳ Full
-          </button>
-          <button
-            id="export"
-            title="Download the database as a .sqlite file"
-            disabled={exporting}
-            onClick={() => void exportDb()}
-          >
-            Export
+            Sync
           </button>
           {runtime.openPage && (
             <button id="expand" title="Open as a full page" onClick={runtime.openPage}>
@@ -538,8 +428,6 @@ export function App({ runtime }: { runtime: Runtime }) {
           <option value="semantic">Semantic</option>
         </select>
       </div>
-
-      {devRow}
 
       <div id="status" class={status.error ? "error" : ""}>
         {status.text}

@@ -8,8 +8,6 @@ import type { BackgroundApi } from "../../ext/background-service.ts";
 export interface Runtime {
   api: Client<BackgroundApi>;
   prefs: Prefs;
-  /** Fetch the exported .sqlite and hand it to the user as a download. */
-  downloadExport(): Promise<void>;
   /** Open the full-page view; present only where an expand control makes
    *  sense (the popup). */
   openPage?: () => void;

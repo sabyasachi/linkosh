@@ -26,6 +26,7 @@ body {
 }
 h1 { font-size: 18px; }
 h2 { font-size: 15px; margin-top: 28px; }
+h3 { font-size: 13px; margin: 20px 0 8px; }
 label { display: block; margin: 14px 0 4px; font-weight: 600; }
 .hint { font-weight: 400; color: var(--muted); font-size: 12px; margin-top: 2px; }
 select, input[type="password"], input[type="text"] {
@@ -58,3 +59,13 @@ button:disabled { opacity: 0.6; cursor: default; }
   color: var(--muted);
   white-space: pre-line;
 }
+.developer-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.developer-actions button { margin-top: 10px; }
+#raw-stats {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+#dev-status { min-height: 18px; margin-top: 10px; color: var(--muted); }

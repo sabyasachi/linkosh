@@ -75,10 +75,6 @@ button:disabled {
   cursor: default;
 }
 
-button#full-sync {
-  padding: 4px 8px;
-}
-
 #search-row {
   display: flex;
   gap: 6px;
@@ -102,33 +98,6 @@ button#full-sync {
 /* Hybrid / Text / Semantic */
 #search-mode {
   flex: none;
-}
-
-/* Dev tools row, shown only while capture mode is on (see popup.js). */
-#dev-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 8px 12px 0;
-  padding: 6px 10px;
-  border: 1px dashed var(--border);
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-#dev-row[hidden] {
-  display: none;
-}
-
-#dev-row #raw-stats {
-  flex: 1;
-  min-width: 0;
-}
-
-#dev-row button {
-  padding: 3px 8px;
-  font-size: 12px;
 }
 
 #status {

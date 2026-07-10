@@ -22,7 +22,7 @@ const REQUEST_TIMEOUT_MS = 15000; // IG stalls the connection when throttling
 // (verified live 2026-07). So 572 / 429 / 5xx / timeouts are treated as
 // transient — back off and retry the same page. Sleeps stay < 30s so the MV3
 // service worker isn't suspended mid-wait; if all retries are exhausted the
-// sync ends partial (landed items kept) and the next Refresh resumes from the
+// sync ends partial (landed items kept) and the next Sync resumes from the
 // top, riding through each wall a little further until the backfill completes.
 const RETRY_BACKOFFS_MS = [8000, 15000, 25000];
 
@@ -107,7 +107,7 @@ export function createProvider(env: ProviderEnv): Provider {
     if (lastStatus === 429 || lastStatus === 572 || lastStatus === 0 || lastStatus >= 500) {
       throw new ProviderError(
         `Instagram is throttling this sync (HTTP ${lastStatus || "timeout"}). ` +
-          `Any items fetched so far were saved; wait a few minutes and press Refresh to continue.`
+          `Any items fetched so far were saved; wait a few minutes and press Sync to continue.`
       );
     }
     throw new Error(`Instagram API returned HTTP ${lastStatus || `error: ${lastBody}`}`);
@@ -182,7 +182,7 @@ export function createProvider(env: ProviderEnv): Provider {
         // independently re-parseable from the raw_data archive.
         //
         // Backfill checkpoint: a partial sync records no syncedAt, so without
-        // this the next Refresh would restart from the top and re-walk the
+        // this the next Sync would restart from the top and re-walk the
         // whole already-synced prefix (burning IG's request-volume budget
         // before reaching new items). Instead we cache the cursor of the next
         // un-fetched page and resume from it — see docs/instagram-provider.md.
@@ -211,9 +211,9 @@ export function createProvider(env: ProviderEnv): Provider {
             if (maxId) await env.cache.set(RESUME_KEY, maxId);
           }
         } catch (e) {
-          // A throttle-stop keeps the checkpoint so the next Refresh continues;
+          // A throttle-stop keeps the checkpoint so the next Sync continues;
           // any other failure (e.g. a stale cursor IG rejects) clears it so the
-          // next Refresh restarts cleanly from the top instead of wedging.
+          // next Sync restarts cleanly from the top instead of wedging.
           if (!(e instanceof ProviderError && /throttling/.test(e.message))) {
             await env.cache.remove(RESUME_KEY);
           }
