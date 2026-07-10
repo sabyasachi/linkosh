@@ -35,6 +35,15 @@ test("dev service: rawIngest processes pending raw pages and then becomes a no-o
   res = await service.rawIngest({});
   assert.equal(res.pages, 0);
   assert.equal(count(db, {}), 2);
+
+  // Clearing items preserves raw_data. Its rows are already marked ingested,
+  // so the full replay path must be able to restore the item database.
+  assert.deepEqual(await service.clearItems({}), { deleted: 2 });
+  assert.equal(count(db, {}), 0);
+  res = await service.rawReingest({});
+  assert.equal(res.ingested, 1);
+  assert.equal(res.inserted, 2);
+  assert.equal(count(db, {}), 2);
   db.close();
 });
 

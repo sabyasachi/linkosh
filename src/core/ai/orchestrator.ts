@@ -160,6 +160,12 @@ export function createOrchestrator({ db, ai, getSettings }: CreateOrchestratorOp
     if (mode === "fts") return fts();
     if (FTS_OPERATORS.test(query.trim())) return fts();
 
+    // Keep interactive search responsive while a potentially long cloud/local
+    // backlog batch owns the embedder. Text results return immediately; the UI
+    // explains the temporary fallback and the next search can use vectors once
+    // the drain finishes.
+    if (backlogRun) return fts();
+
     await configured;
     const aiStatus = await ai.status({});
     if (!aiStatus.ready) {

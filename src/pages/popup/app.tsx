@@ -230,6 +230,10 @@ export function App({ runtime }: { runtime: Runtime }) {
       const trimmed = text.trim();
       if (!trimmed) return loadItems();
       const gen = ++generationRef.current; // stop in-flight list pages from appending
+      const usesVectorIntent = mode !== "fts" && !FTS_OPERATORS.test(trimmed);
+      setStatus({
+        text: usesVectorIntent ? "Searching… checking semantic-search availability" : "Searching…",
+      });
       try {
         const res = await api.search({
           provider: providerRef.current === ALL ? null : providerRef.current,
@@ -248,6 +252,25 @@ export function App({ runtime }: { runtime: Runtime }) {
             : " · text-only (model warming up)";
         }
         setStatus({ text: `${res.items.length} matches${note}` });
+
+        // Results are already visible. Enrich their status asynchronously so
+        // a slow/busy AI-status RPC can never hold the search UX hostage.
+        if (usesVectorIntent) {
+          void api
+            .aiStatus({})
+            .then((embeddingStatus) => {
+              if (gen !== generationRef.current || !embeddingStatus.backlog) return;
+              const backlogNote = embeddingStatus.embedding.running
+                ? `embedding in progress (${embeddingStatus.backlog} remaining)`
+                : `${embeddingStatus.backlog} items not embedded yet`;
+              const embeddingNote =
+                res.mode === "fts"
+                  ? ` · text-only · ${backlogNote}`
+                  : ` · results may be incomplete — ${backlogNote}`;
+              setStatus({ text: `${res.items.length} matches${embeddingNote}` });
+            })
+            .catch(() => {});
+        }
       } catch (e) {
         if (gen === generationRef.current) setStatus({ text: errorText(e), error: true });
       }

@@ -241,11 +241,12 @@ function OptionsApp() {
 
   const ingestRaw = async () => {
     setDevAction("ingest");
-    setDevStatus("Ingesting raw pages…");
+    const replayAll = pendingRaw + failedRaw === 0;
+    setDevStatus(replayAll ? "Re-ingesting all raw pages…" : "Ingesting raw pages…");
     try {
-      const result = await api.rawIngest({});
+      const result = replayAll ? await api.rawReingest({}) : await api.rawIngest({});
       setDevStatus(
-        `Ingested ${result.ingested} of ${result.pages} raw pages` +
+        `${replayAll ? "Re-ingested" : "Ingested"} ${result.ingested} of ${result.pages} raw pages` +
           (result.failed ? ` · ${result.failed} failed` : "") +
           ` · ${result.inserted} new items.`
       );
@@ -395,10 +396,15 @@ function OptionsApp() {
       <div class="developer-actions">
         <button
           id="ingest-raw"
-          disabled={Boolean(devAction) || pendingRaw + failedRaw === 0}
+          disabled={Boolean(devAction) || rawPages === 0}
+          title={
+            pendingRaw + failedRaw
+              ? "Ingest pending and previously failed raw pages"
+              : "Replay every archived raw page, including pages already ingested"
+          }
           onClick={() => void ingestRaw()}
         >
-          Ingest raw
+          {pendingRaw + failedRaw ? "Ingest raw" : "Reingest raw"}
         </button>
         <button
           id="clear-raw"

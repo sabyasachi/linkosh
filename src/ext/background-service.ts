@@ -50,6 +50,8 @@ export interface BackgroundApi {
   /** Delete items (all providers) and reset sync state; raw_data untouched. */
   clearItems(args: Record<string, never>): { deleted: number };
   rawIngest(args: Record<string, never>): IngestReport;
+  /** Replay every archived page, including rows already marked ingested. */
+  rawReingest(args: Record<string, never>): IngestReport;
   rawClear(args: Record<string, never>): { cleared: true };
   rawStats(args: Record<string, never>): { stats: RawStatsRow[]; captureRaw: boolean };
 }
@@ -137,6 +139,12 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
     rawIngest: async () => {
       const result = await db.rawIngest({});
       embedSoon(); // freshly upserted rows need embeddings
+      return result;
+    },
+
+    rawReingest: async () => {
+      const result = await db.rawReingest({});
+      embedSoon(); // restored/changed rows need embeddings
       return result;
     },
 

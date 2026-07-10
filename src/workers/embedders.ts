@@ -25,6 +25,38 @@ export interface EmbeddingProvider {
 env.allowLocalModels = false;
 env.backends.onnx.wasm.wasmPaths = new URL("../vendor/ort/", import.meta.url).href;
 
+const MISSING_CONTENT_LENGTH_WARNING =
+  "Unable to determine content-length from response headers. Will expand buffer when needed.";
+
+/** Transformers.js warns when Hugging Face serves model weights with chunked
+ *  transfer encoding. Its downloader handles that case correctly by growing
+ *  the buffer, but Chrome records console.warn calls as extension issues. The
+ *  warning is emitted only when a progress callback is installed, which we
+ *  need for options-page status, so suppress this one known-benign message at
+ *  our integration boundary and leave every other vendor warning untouched. */
+async function loadLocalPipeline(
+  onProgress?: (p: DownloadProgress) => void
+): Promise<FeatureExtractionPipeline> {
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => {
+    if (args.length === 1 && args[0] === MISSING_CONTENT_LENGTH_WARNING) return;
+    originalWarn.apply(console, args);
+  };
+  try {
+    return await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+      dtype: "q8",
+      device: "wasm",
+      progress_callback: (p) => {
+        if (p.status === "progress" && onProgress) {
+          onProgress({ loaded: p.loaded ?? 0, total: p.total ?? 0 });
+        }
+      },
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 export function createLocalProvider(): EmbeddingProvider {
   let extractor: FeatureExtractionPipeline | null = null;
   return {
@@ -33,15 +65,7 @@ export function createLocalProvider(): EmbeddingProvider {
     async init(onProgress) {
       // Extension pages are not cross-origin isolated → no SharedArrayBuffer
       // → single-threaded WASM. q8 MiniLM runs ~5–20 ms per short row text.
-      extractor ??= await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
-        dtype: "q8",
-        device: "wasm",
-        progress_callback: (p) => {
-          if (p.status === "progress" && onProgress) {
-            onProgress({ loaded: p.loaded ?? 0, total: p.total ?? 0 });
-          }
-        },
-      });
+      extractor ??= await loadLocalPipeline(onProgress);
     },
     async embed(texts) {
       const output = await extractor!(texts, { pooling: "mean", normalize: true });

@@ -155,6 +155,37 @@ test("overlapping embedBacklog triggers coalesce (single-flight)", async () => {
   db.close();
 });
 
+test("vector search falls back immediately while the embedding backlog is running", async () => {
+  const db = await openDb();
+  seedItems(db, ["rust in production", "cooking with cast iron"]);
+  const fake = createFakeAi();
+  const originalEmbed = fake.ai.embed;
+  let releaseBatch!: () => void;
+  const batchReleased = new Promise<void>((resolve) => (releaseBatch = resolve));
+  let batchStarted!: () => void;
+  const batchDidStart = new Promise<void>((resolve) => (batchStarted = resolve));
+  let first = true;
+  fake.ai.embed = async (args) => {
+    if (first) {
+      first = false;
+      batchStarted();
+      await batchReleased;
+    }
+    return originalEmbed(args);
+  };
+  const { orchestrator } = makeOrchestrator(db, fake);
+
+  const draining = orchestrator.embedBacklog({});
+  await batchDidStart;
+  const result = await orchestrator.search({ query: "rust", mode: "hybrid" });
+  assert.deepEqual({ mode: result.mode, requested: result.requested }, { mode: "fts", requested: "hybrid" });
+  assert.equal(result.items.length, 1);
+
+  releaseBatch();
+  await draining;
+  db.close();
+});
+
 test("rowText joins content, falls back for empty rows, and truncates at 1000 chars", () => {
   assert.equal(rowText({ title: "t", publication: "", summary: "s" }), "t\ns");
   assert.equal(
