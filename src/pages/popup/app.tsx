@@ -26,6 +26,24 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+function Thumbnail({ item }: { item: SavedItem }) {
+  const [failed, setFailed] = useState(false);
+
+  // Item rows can be reused as list/search results change. Give a new image
+  // URL its own load attempt instead of retaining the previous URL's failure.
+  useEffect(() => setFailed(false), [item.image]);
+
+  if (!item.image || failed) {
+    return (
+      <div class="thumb placeholder">
+        {(item.title || item.posterName || "?").slice(0, 1).toUpperCase()}
+      </div>
+    );
+  }
+
+  return <img class="thumb" src={item.image} alt="" onError={() => setFailed(true)} />;
+}
+
 function ItemRow({
   item,
   providerLabel,
@@ -63,11 +81,7 @@ function ItemRow({
   return (
     <li class={`item${posterTitle ? " poster-title-item" : ""}`}>
       <a href={item.url || "#"} target="_blank" rel="noreferrer">
-        {item.image ? (
-          <img class="thumb" src={item.image} alt="" />
-        ) : (
-          <div class="thumb placeholder">{(item.title || "?").slice(0, 1).toUpperCase()}</div>
-        )}
+        <Thumbnail item={item} />
         <div class="text">
           {fields.map(
             ([cls, value, tooltip]) =>
