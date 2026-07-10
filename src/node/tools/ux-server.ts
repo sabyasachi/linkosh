@@ -112,7 +112,7 @@ export function createDevService(db: SqlDatabase): Handlers<BackgroundApi> {
       { id: "instagram", label: "Instagram" },
       { id: "youtube", label: "YouTube" },
       { id: "hackernews", label: "Hacker News" },
-      { id: "twitter", label: "X (Twitter)" },
+      { id: "twitter", label: "X" },
       { id: "facebook", label: "Facebook" },
       { id: "substack", label: "Substack" },
     ],

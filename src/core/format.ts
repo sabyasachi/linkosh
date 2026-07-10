@@ -23,14 +23,18 @@ export function formatCollection(collection: string[] | undefined): string {
   return (collection ?? []).filter(Boolean).join(", ");
 }
 
-export function formatStats(stats: Record<string, string> | undefined): string {
+export function formatStats(
+  stats: Record<string, string> | undefined,
+  { hideAge = false }: { hideAge?: boolean } = {}
+): string {
   if (!stats) return "";
   const parts: string[] = [];
-  for (const key of ["views", "age", "info"]) {
+  for (const key of ["views", "age", "info", "points", "comments"]) {
+    if (key === "age" && hideAge) continue;
     if (stats[key]) parts.push(String(stats[key]));
   }
   for (const [key, value] of Object.entries(stats)) {
-    if (["views", "age", "info"].includes(key) || value == null || value === "") continue;
+    if (["views", "age", "info", "points", "comments"].includes(key) || value == null || value === "") continue;
     parts.push(`${key}: ${value}`);
   }
   return parts.join(" · ");
@@ -63,7 +67,19 @@ export function formatRelativeDate(ts: number | null | undefined, now: number = 
 /** An item as the meta-line formatter needs it — SavedItem satisfies this;
  *  parser output does too (provider defaults to ""). */
 export type MetaItem = Pick<ParsedItem, "kind" | "duration" | "stats" | "collection"> &
-  Partial<Pick<SavedItem, "provider" | "bookmarkedAt" | "publishedAt">>;
+  Partial<Pick<SavedItem, "provider" | "bookmarkedAt" | "publishedAt">> & {
+    summary?: string | null;
+  };
+
+/** Older HN rows stored story counters in summary, whose list style is larger
+ *  than metadata. Keep recognizing those rows so the UI fix needs no resync. */
+export function hackerNewsCounts(item: MetaItem): string {
+  const summary = item.summary || "";
+  return item.provider === "hackernews" && item.kind === "story" &&
+      /^\d[\d,]* points? · \d[\d,]* comments?$/.test(summary)
+    ? summary
+    : "";
+}
 
 function formatSavedDate(item: MetaItem, now: number): string {
   const date = item.bookmarkedAt || item.publishedAt;
@@ -87,12 +103,21 @@ export function metaParts(
   item: MetaItem,
   { providerLabel = "", now = Date.now() }: { providerLabel?: string; now?: number } = {}
 ): string[] {
+  // YouTube's raw age text freezes at the value returned by the last sync.
+  // Once it has been converted to publishedAt, render that timestamp relative
+  // to `now` below so "10 days ago" becomes "11 days ago" tomorrow.
+  const hasDynamicYouTubeAge =
+    item.provider === "youtube" && !item.bookmarkedAt && Boolean(item.publishedAt);
+  const legacyHackerNewsCounts = hackerNewsCounts(item);
+  const stats = legacyHackerNewsCounts
+    ? { ...item.stats, info: legacyHackerNewsCounts }
+    : item.stats;
   return [
     providerLabel,
     item.kind === "short" ? "Short" : "",
     item.duration ? formatDuration(item.duration) : "",
-    formatStats(item.stats),
-    formatCollection(item.collection),
+    formatStats(stats, { hideAge: hasDynamicYouTubeAge }),
+    formatCollection(item.provider === "hackernews" ? [] : item.collection),
     formatSavedDate(item, now),
   ].filter(Boolean);
 }

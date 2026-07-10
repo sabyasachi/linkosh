@@ -199,7 +199,7 @@ export function createProvider(env: ProviderEnv): Provider {
 
   return {
     id: "twitter",
-    label: "X (Twitter)",
+    label: "X",
     async fetchItems({ onPage }) {
       const csrfToken = await getCsrfToken();
       return env.withTab(TAB, async (tabId) => {

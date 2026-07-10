@@ -5,7 +5,7 @@
 // export, and the capture-mode dev row.
 import { h, Fragment, type ComponentChildren } from "../../vendor/preact/preact.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "../../vendor/preact/hooks.js";
-import { formatPoster, formatSynced, metaParts } from "../../core/format.ts";
+import { formatPoster, formatSynced, hackerNewsCounts, metaParts } from "../../core/format.ts";
 import { FTS_OPERATORS } from "../../core/fts.ts";
 import type { ProviderId, ProviderMeta, SavedItem, SearchMode, SyncReport } from "../../core/types.ts";
 import type { RawStatsRow } from "../../core/db/raw.ts";
@@ -37,6 +37,7 @@ function ItemRow({
   onSimilar: (item: SavedItem) => void;
 }) {
   const poster = formatPoster(item);
+  const summary = hackerNewsCounts(item) ? "" : item.summary;
   const publication = item.publication || "";
   const posterTitle = Boolean(poster && item.title);
   // Title-less rows are posts: their author bio/headline or secondary
@@ -50,13 +51,13 @@ function ItemRow({
         ["poster", poster],
         ["title", item.title],
         ["publication", publication],
-        ["summary", item.summary],
+        ["summary", summary],
       ]
     : [
         ["title", item.title],
         ["poster", poster, postLike && posterTooltip ? posterTooltip : undefined],
         ["publication", !postLike && publication],
-        ["summary", item.summary],
+        ["summary", summary],
       ];
   const meta = metaParts(item, { providerLabel }).join(" · ");
 

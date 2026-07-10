@@ -56,7 +56,8 @@ export function parseStories(html: string): ParsedItem[] {
       title: stripTags(link[2]!),
       posterHandle: author,
       publication: site,
-      summary: `${points} points · ${comments} comments`,
+      summary: "",
+      stats: { points: `${points} points`, comments: `${comments} comments` },
       // Open the HN discussion item, not the outbound article. Saved HN
       // users usually want comments/context, and comments already use this
       // same canonical item URL.

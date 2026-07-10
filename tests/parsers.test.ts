@@ -37,7 +37,8 @@ test("hackernews stories: title/site/points parsed, discussion URLs, epoch age",
   assert.equal(story.title, "Story One & friends"); // tags stripped, entities decoded
   assert.equal(story.posterHandle, "alice");
   assert.equal(story.publication, "example.com");
-  assert.equal(story.summary, "1234 points · 456 comments");
+  assert.equal(story.summary, "");
+  assert.deepEqual(story.stats, { points: "1234 points", comments: "456 comments" });
   assert.equal(story.url, "https://news.ycombinator.com/item?id=11111");
   assert.equal(story.publishedAt, 1783344537000); // epoch-suffixed age wins
   assert.equal(story.kind, "story");
