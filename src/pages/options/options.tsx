@@ -78,7 +78,15 @@ function formatStatus(s: OrchestratorStatus): string {
   return lines.join("\n");
 }
 
-function DevToggle({ prefKey, label, hint }: { prefKey: "captureRaw" | "testMode"; label: string; hint: string }) {
+function PrefToggle({
+  prefKey,
+  label,
+  hint,
+}: {
+  prefKey: "openFullPage" | "captureRaw" | "testMode";
+  label: string;
+  hint: string;
+}) {
   const [checked, setChecked] = useState(false);
   useEffect(() => {
     void prefs.get(prefKey).then((value) => setChecked(Boolean(value)));
@@ -273,6 +281,13 @@ function OptionsApp() {
     <>
       <h1>Linkosh — Options</h1>
 
+      <h2>Extension icon</h2>
+      <PrefToggle
+        prefKey="openFullPage"
+        label="Open the full page when I click the extension icon"
+        hint="When off, clicking the extension icon opens the compact popup."
+      />
+
       <h2>Semantic search</h2>
       <p class="hint">
         By default embeddings are computed on-device (a small model is downloaded once, then
@@ -329,12 +344,12 @@ function OptionsApp() {
       </button>
 
       <h2>Developer</h2>
-      <DevToggle
+      <PrefToggle
         prefKey="captureRaw"
         label="Capture mode: archive raw API responses instead of saving items"
         hint="While on, Sync and Full sync store each response page verbatim in raw_data and leave the item list untouched. Use Ingest raw below or tools/ingest.ts on an export to run the parsing pipeline without re-fetching. Takes effect on the next sync."
       />
-      <DevToggle
+      <PrefToggle
         prefKey="testMode"
         label="Test mode: stop each sync after about 100 items"
         hint="For quickly checking a provider works without a heavy fetch from the service (a little more than 100 for providers that walk several lists, e.g. YouTube playlists). Takes effect on the next sync."

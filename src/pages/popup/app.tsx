@@ -396,6 +396,17 @@ export function App({ runtime }: { runtime: Runtime }) {
               ⛶
             </button>
           )}
+          {runtime.openOptions && (
+            <button
+              id="settings"
+              class="icon-button"
+              title="Settings"
+              aria-label="Open settings"
+              onClick={runtime.openOptions}
+            >
+              ⚙
+            </button>
+          )}
         </div>
       </header>
 

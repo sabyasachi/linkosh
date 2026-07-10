@@ -12,6 +12,8 @@ export interface PrefsSchema {
   /** Provider tab the popup last showed ("all" = across providers). */
   lastProvider: ProviderId | "all";
   searchMode: SearchMode;
+  /** Open the full-page list instead of a popup when the extension icon is clicked. */
+  openFullPage: boolean;
   /** Dev: archive raw pages instead of upserting (the no-refetch pipeline). */
   captureRaw: boolean;
   /** Dev: cap syncs at ~100 items for smoke tests. */

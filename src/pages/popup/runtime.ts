@@ -11,4 +11,6 @@ export interface Runtime {
   /** Open the full-page view; present only where an expand control makes
    *  sense (the popup). */
   openPage?: () => void;
+  /** Open the extension's options page. Omitted by the HTTP dev harness. */
+  openOptions?: () => void;
 }

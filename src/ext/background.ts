@@ -20,6 +20,24 @@ import * as facebook from "./providers/facebook.ts";
 import * as substack from "./providers/substack.ts";
 
 const runtime = chrome.runtime as unknown as RuntimeLike;
+const prefs = createChromePrefs();
+
+// Chrome only fires action.onClicked when no popup is configured. The popup
+// choice is persisted by Chrome, while applying it on every worker start also
+// handles extension reloads and restores the manifest default when disabled.
+const POPUP_URL = "pages/popup/popup.html";
+const FULL_PAGE_URL = "pages/popup/page.html";
+
+function configureAction(openFullPage: boolean): void {
+  void chrome.action.setPopup({ popup: openFullPage ? "" : POPUP_URL });
+}
+
+chrome.action.onClicked.addListener(() => {
+  void chrome.tabs.create({ url: chrome.runtime.getURL(FULL_PAGE_URL) });
+});
+
+prefs.watch("openFullPage", (value) => configureAction(Boolean(value)));
+void prefs.get("openFullPage").then((value) => configureAction(Boolean(value)));
 
 // ---------- offscreen document (hosts the DB + AI workers) ----------
 
@@ -89,7 +107,7 @@ const service = createBackgroundService({
   providers: PROVIDERS,
   db: createClient<DbWorkerApi>(offscreenTransport("db")),
   ai: createClient<AiApi>(offscreenTransport("ai")),
-  prefs: createChromePrefs(),
+  prefs,
 });
 
 serveRuntime<BackgroundApi>(runtime, "background", service);

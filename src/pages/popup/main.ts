@@ -19,6 +19,9 @@ const isPopup = document.body.classList.contains("popup");
 const runtime: Runtime = {
   api,
   prefs: createChromePrefs(),
+  openOptions() {
+    void chrome.runtime.openOptionsPage();
+  },
   ...(isPopup
     ? {
         openPage() {
