@@ -2,7 +2,7 @@
 
 This document describes what each persisted column means and how each provider
 should populate it. It is based on the current parser code and a raw archive
-audit of `saved-links-2.sqlite`.
+audit of a predecessor database export.
 
 ## Raw Data Audit
 

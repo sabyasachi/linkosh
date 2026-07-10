@@ -1,6 +1,6 @@
 // Clean v1 schema — the TypeScript rewrite starts fresh (the pre-rewrite
 // migration chain was retired with its data; the OPFS filename changed to
-// saved-links-v1.sqlite so an old-schema file can never collide with these
+// linkosh-v1.sqlite so an old-schema file can never collide with these
 // CREATE IF NOT EXISTS statements).
 import type { SqlDatabase } from "./port.ts";
 

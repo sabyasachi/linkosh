@@ -1,4 +1,4 @@
-# Restructure saved-links into separately testable stages
+# Restructure Linkosh into separately testable stages
 
 ## Context
 

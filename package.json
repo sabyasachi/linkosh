@@ -1,8 +1,8 @@
 {
-  "name": "saved-links",
+  "name": "linkosh",
   "private": true,
   "version": "0.0.0",
-  "description": "Toolchain for the saved-links extension: tsc compiles src/ 1:1 into dist/ (the unpacked-extension dir); tests and tools run the same .ts sources directly under Node via native type stripping. Zero runtime dependencies by design — vendor/ carries the only third-party code.",
+  "description": "Toolchain for the Linkosh extension: tsc compiles src/ 1:1 into dist/ (the unpacked-extension dir); tests and tools run the same .ts sources directly under Node via native type stripping. Zero runtime dependencies by design — vendor/ carries the only third-party code.",
   "type": "module",
   "engines": {
     "node": ">=23.6"

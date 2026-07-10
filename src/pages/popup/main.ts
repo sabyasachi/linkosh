@@ -33,7 +33,7 @@ const runtime: Runtime = {
     const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.sqlite3" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = "saved-links.sqlite";
+    a.download = "linkosh.sqlite";
     a.click();
     URL.revokeObjectURL(url);
     await root.removeEntry(file).catch(() => {});

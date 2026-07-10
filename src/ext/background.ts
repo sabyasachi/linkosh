@@ -25,18 +25,40 @@ const runtime = chrome.runtime as unknown as RuntimeLike;
 
 let creatingOffscreen: Promise<void> | null = null;
 
+/** createDocument() can resolve before offscreen.js has installed its runtime
+ * listeners. Ping an endpoint registered only after the DB/AI relays are ready
+ * so the first request on a fresh extension origin cannot race startup. */
+async function waitForOffscreenReady(): Promise<void> {
+  const control = runtimeTransport(runtime, "offscreen-control");
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 40; attempt++) {
+    try {
+      await control.call("ready", {});
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+  }
+  throw lastError;
+}
+
 async function ensureOffscreen(): Promise<void> {
   const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT" as chrome.runtime.ContextType] });
-  if (contexts.length) return;
-  creatingOffscreen ??= chrome.offscreen
-    .createDocument({
+  if (contexts.length) {
+    await waitForOffscreenReady();
+    return;
+  }
+  creatingOffscreen ??= (async () => {
+    await chrome.offscreen.createDocument({
       url: "pages/offscreen.html",
       reasons: ["WORKERS" as chrome.offscreen.Reason],
       justification:
         "Hosts the SQLite (WASM) database worker; service workers cannot spawn " +
         "dedicated workers or use synchronous OPFS file handles.",
-    })
-    .finally(() => (creatingOffscreen = null));
+    });
+    await waitForOffscreenReady();
+  })().finally(() => (creatingOffscreen = null));
   await creatingOffscreen;
 }
 

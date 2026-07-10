@@ -98,7 +98,7 @@ export function App({ runtime }: { runtime: Runtime }) {
   const [hasMore, setHasMore] = useState(false);
   const [status, setStatus] = useState<Status>({ text: "" });
   const [query, setQuery] = useState("");
-  const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
+  const [searchMode, setSearchMode] = useState<SearchMode>("fts");
   const [syncing, setSyncing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [devStats, setDevStats] = useState<RawStatsRow[] | null>(null); // null = capture mode off
@@ -458,7 +458,7 @@ export function App({ runtime }: { runtime: Runtime }) {
   return (
     <>
       <header>
-        <h1>Saved Links</h1>
+        <h1>Linkosh</h1>
         <div class="controls">
           <select
             id="provider"
@@ -532,8 +532,8 @@ export function App({ runtime }: { runtime: Runtime }) {
             if (query.trim()) onSearchInput(query, mode);
           }}
         >
-          <option value="hybrid">Hybrid</option>
           <option value="fts">Text</option>
+          <option value="hybrid">Hybrid</option>
           <option value="semantic">Semantic</option>
         </select>
       </div>

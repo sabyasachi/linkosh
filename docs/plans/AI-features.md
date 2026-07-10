@@ -1,4 +1,4 @@
-# Create two AI-feature plan docs for saved-links
+# Create two AI-feature plan docs for Linkosh
 
 ## Context
 

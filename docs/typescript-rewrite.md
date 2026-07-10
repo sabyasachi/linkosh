@@ -17,7 +17,7 @@ robust, compiler-enforced abstractions — not just types bolted on.
 
 No data was preserved (single dev user), so the legacy migration chain was
 dropped for a clean v1 schema, and the OPFS DB filename changed to
-`saved-links-v1.sqlite` so a stale old-schema file can't collide.
+`linkosh-v1.sqlite` so a stale old-schema file can't collide.
 
 ## Toolchain decision: tsc-only, no bundler
 

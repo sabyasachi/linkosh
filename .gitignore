@@ -157,7 +157,7 @@ Temporary Items
 *.sqlite-wal
 *.sqlite-journal
 
-### saved-links build outputs
+### Linkosh build outputs
 node_modules/
 dist/
 .tsbuildinfo/

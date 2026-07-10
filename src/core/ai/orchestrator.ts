@@ -127,14 +127,14 @@ export function createOrchestrator({ db, ai, getSettings }: CreateOrchestratorOp
     };
   }
 
-  // mode is the user's selector choice: "hybrid" (default) | "fts" |
+  // mode is the user's selector choice: "fts" (default) | "hybrid" |
   // "semantic". The response reports what actually ran so the UI can explain
   // fallbacks ("text-only (model warming up)").
   async function search({
     query,
     provider,
     limit = 200,
-    mode = "hybrid",
+    mode = "fts",
   }: {
     query: string;
     provider?: ProviderId | null;

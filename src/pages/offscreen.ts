@@ -52,3 +52,13 @@ const orchestrator = createOrchestrator({
 });
 
 serveRuntime<AiApi>(runtime, "ai", orchestrator);
+
+interface OffscreenControlApi {
+  ready(args: Record<string, never>): boolean;
+}
+
+// Registered last: a successful ping means both worker relay endpoints above
+// are installed and the background service may safely send its first request.
+serveRuntime<OffscreenControlApi>(runtime, "offscreen-control", {
+  ready: () => true,
+});

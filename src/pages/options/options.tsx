@@ -159,7 +159,7 @@ function OptionsApp() {
 
   return (
     <>
-      <h1>Saved Links — Options</h1>
+      <h1>Linkosh — Options</h1>
 
       <h2>Semantic search</h2>
       <p class="hint">

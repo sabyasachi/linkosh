@@ -89,6 +89,17 @@ test("search: explicit fts mode and operator queries never touch the model", asy
   db.close();
 });
 
+test("search defaults to text mode when the caller omits mode", async () => {
+  const db = await openDb();
+  seedItems(db, ["rust in production"]);
+  const fake = createFakeAi();
+  const { orchestrator } = makeOrchestrator(db, fake);
+  const result = await orchestrator.search({ query: "rust" });
+  assert.deepEqual({ mode: result.mode, requested: result.requested }, { mode: "fts", requested: "fts" });
+  assert.equal(fake.calls.filter((c) => c.op === "embed").length, 0);
+  db.close();
+});
+
 test("search falls back to fts while the model isn't ready, kicking the backlog", async () => {
   const db = await openDb();
   seedItems(db, ["rust in production"]);

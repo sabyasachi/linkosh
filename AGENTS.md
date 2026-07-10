@@ -20,7 +20,7 @@ A Chrome MV3 extension (strict TypeScript, zero runtime npm dependencies) that s
 - `npm run typecheck` (`tsc -b`, incremental) for a fast compile check.
 - `npm run ux` — Node dev harness for the UI: serves the built assets plus the extension's own `createBackgroundService` over HTTP RPC from a fixture-seeded (or `--db <export.sqlite>`) database, with a deterministic fake embedder. `http://127.0.0.1:5173/` mounts the same Preact tree as the popup. Build first; rebuild after UI edits.
 - Debug consoles: the service worker (ext/background.js) from `chrome://extensions`; the DB worker by selecting it in a DevTools console context — it exposes `__sql("SELECT ...")` and `__db` (see src/workers/db.worker.ts). `debug.html` is a blank extension-origin page for exercising chrome.runtime flows from a normal tab.
-- The DB file lives in the extension origin's OPFS (`saved-links-v1.sqlite`) and survives reloads; "⟳ Full" re-walks a provider, Export downloads the .sqlite.
+- The DB file lives in the extension origin's OPFS (`linkosh-v1.sqlite`) and survives reloads; "⟳ Full" re-walks a provider, Export downloads the .sqlite.
 
 ### The no-refetch pipeline workflow
 

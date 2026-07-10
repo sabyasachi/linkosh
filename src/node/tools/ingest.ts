@@ -4,8 +4,8 @@
 //
 //   1. In the extension: enable capture mode, sync, Export.
 //   2. Iterate on core/parse/* here:
-//        node src/node/tools/ingest.ts saved-links-export.sqlite            # pending+failed rows
-//        node src/node/tools/ingest.ts saved-links-export.sqlite --reingest # everything, again
+//        node src/node/tools/ingest.ts linkosh-export.sqlite            # pending+failed rows
+//        node src/node/tools/ingest.ts linkosh-export.sqlite --reingest # everything, again
 //   3. Inspect results (sqlite3 CLI, tests), fix, repeat.
 //
 // Options:
@@ -51,7 +51,7 @@ if (!file) {
 let tempDir: string | null = null;
 let target = file;
 if (dryRun) {
-  tempDir = mkdtempSync(join(tmpdir(), "saved-links-ingest-"));
+  tempDir = mkdtempSync(join(tmpdir(), "linkosh-ingest-"));
   target = join(tempDir, "dry-run.sqlite");
   copyFileSync(file, target);
 } else if (out) {

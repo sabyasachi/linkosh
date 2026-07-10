@@ -23,11 +23,11 @@ interface DbHost {
 
 const ready: Promise<DbHost> = (async () => {
   const sqlite3 = await sqlite3InitModule();
-  const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ name: "saved-links" });
-  // The filename is versioned: the pre-TypeScript extension used
-  // /saved-links.sqlite with a different schema and no migration path — a
-  // fresh name guarantees CREATE TABLE IF NOT EXISTS never meets stale DDL.
-  const db = wasmDb(new poolUtil.OpfsSAHPoolDb("/saved-links-v1.sqlite"));
+  const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ name: "linkosh" });
+  // The filename is versioned: the pre-TypeScript predecessor used a
+  // different schema with no migration path, so a fresh name guarantees
+  // CREATE TABLE IF NOT EXISTS never meets stale DDL.
+  const db = wasmDb(new poolUtil.OpfsSAHPoolDb("/linkosh-v1.sqlite"));
   initSchema(db);
 
   // Serialized copy of the whole DB file, written to a plain OPFS file. The
@@ -37,11 +37,11 @@ const ready: Promise<DbHost> = (async () => {
   async function exportDb(): Promise<{ file: string; size: number }> {
     const bytes = sqlite3.capi.sqlite3_js_db_export(db.oo1.pointer);
     const root = await navigator.storage.getDirectory();
-    const handle = await root.getFileHandle("saved-links-export.sqlite", { create: true });
+    const handle = await root.getFileHandle("linkosh-export.sqlite", { create: true });
     const writable = await handle.createWritable(); // truncates any previous export
     await writable.write(bytes);
     await writable.close();
-    return { file: "saved-links-export.sqlite", size: bytes.length };
+    return { file: "linkosh-export.sqlite", size: bytes.length };
   }
 
   const handlers: Handlers<DbWorkerApi> = {

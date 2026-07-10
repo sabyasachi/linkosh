@@ -1,6 +1,6 @@
 # docs
 
-Engineering notes and design records for saved-links. Start with
+Engineering notes and design records for Linkosh. Start with
 [CLAUDE.md](../CLAUDE.md) for the day-to-day contract; these go deeper on
 specific topics.
 

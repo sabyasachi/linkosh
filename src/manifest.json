@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Saved Links",
+  "name": "Linkosh",
   "version": "0.1.0",
   "description": "Fetch and list your saved items from LinkedIn, Instagram, YouTube, Hacker News, X, Facebook and Substack (more services coming).",
   "permissions": ["storage", "cookies", "offscreen", "scripting"],
@@ -35,7 +35,7 @@
   },
   "action": {
     "default_popup": "pages/popup/popup.html",
-    "default_title": "Saved Links"
+    "default_title": "Linkosh"
   },
   "icons": {
     "16": "icons/icon16.png",

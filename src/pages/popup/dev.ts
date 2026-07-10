@@ -27,14 +27,14 @@ const httpTransport: Transport = {
  *  nothing else writes prefs in this context). */
 const localPrefs: Prefs = {
   async get(key) {
-    const raw = localStorage.getItem(`saved-links:${key}`);
+    const raw = localStorage.getItem(`linkosh:${key}`);
     return raw === null ? undefined : (JSON.parse(raw) as AllPrefs[typeof key]);
   },
   async set(key, value) {
-    localStorage.setItem(`saved-links:${key}`, JSON.stringify(value));
+    localStorage.setItem(`linkosh:${key}`, JSON.stringify(value));
   },
   async remove(key) {
-    localStorage.removeItem(`saved-links:${key}`);
+    localStorage.removeItem(`linkosh:${key}`);
   },
   watch() {
     return () => {};

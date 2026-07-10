@@ -9,7 +9,7 @@ Search today is FTS5 keyword matching over `title`/`subtitle`/`summary`/`collect
 fails on vocabulary mismatch: "that post about burnout" finds nothing if the saved item says
 "exhaustion at work". This plan adds local-first vector search: every row gets an embedding
 (quantized `all-MiniLM-L6-v2`, 384-dim, via transformers.js running fully locally), the search box
-gains a user-selectable mode — **Hybrid** (FTS5 rank + cosine, the default) / **Text** (FTS5 only,
+gains a user-selectable mode — **Text** (FTS5 only, the default) / **Hybrid** (FTS5 rank + cosine,
 exactly today's behavior) / **Semantic** (cosine only) — and each item gets a "more like this"
 nearest-neighbors affordance. An options page adds an optional cloud API key that upgrades
 embedding quality; without a key everything runs on-device and offline.
@@ -140,7 +140,7 @@ options-page save.
   overlapping triggers coalesce. Maintains `{ running, done, total }` for `status()`. Idempotent:
   a crash mid-backlog just leaves `embedding IS NULL` rows for the next trigger.
 - `search({ query, provider, limit, mode })` — `mode` is the **user's choice** from the UI:
-  `"hybrid"` (default), `"fts"`, or `"semantic"`. Routing rules, in order:
+  `"fts"` (default), `"hybrid"`, or `"semantic"`. Routing rules, in order:
   1. `mode: "fts"` → `db.search`, done. (Zero AI involvement — this is the escape hatch that keeps
      search working exactly as today.)
   2. Query matches the FTS-operator regex (mirror of `ftsQuery`'s
@@ -245,7 +245,7 @@ options-page save.
 ### Modified: `popup/popup.js` + `popup/popup.css` (shared verbatim by page/page.html)
 
 - **Search-mode selector (user choice)**: a compact three-way control next to the search input —
-  `<select id="search-mode">` with options `Hybrid` (default) / `Text` / `Semantic` — added to
+  `<select id="search-mode">` with options `Text` (default) / `Hybrid` / `Semantic` — added to
   **both** popup.html and page.html (popup.js is shared verbatim). Shown/hidden together with
   `#search` (same `total === 0` rule). Persisted in `chrome.storage.local` as `searchMode` and
   restored on init, exactly like the existing `lastProvider` pattern. Changing the mode with a

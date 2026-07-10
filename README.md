@@ -1,6 +1,6 @@
-# Saved Links
+# Linkosh
 
-A Chrome extension that fetches your saved items from LinkedIn, Instagram,
+Linkosh is a Chrome extension that fetches your saved items from LinkedIn, Instagram,
 YouTube, Hacker News, X (Twitter), Facebook and Substack and lists them in
 the extension popup. Built to grow: more services can be added as additional
 providers later.
@@ -106,8 +106,8 @@ providers later.
   [transformers.js](https://github.com/huggingface/transformers.js), running
   in a dedicated worker — the model downloads once from huggingface.co
   (~23 MB) and is cached for offline use). The selector next to the search
-  box picks the mode: **Hybrid** (default; text and semantic rankings fused),
-  **Text** (exactly the FTS5 behavior above) or **Semantic** (pure
+  box picks the mode: **Text** (default; exactly the FTS5 behavior above),
+  **Hybrid** (text and semantic rankings fused) or **Semantic** (pure
   similarity). Queries using FTS5 operators always run as text search. Each
   row's **≈** button lists the most similar saved items ("more like this").
   The extension's options page can switch embeddings to a cloud API (OpenAI /
@@ -191,7 +191,7 @@ providers later.
   how you iterate on the parsing/embedding pipeline without re-fetching from
   the services: capture once, **Export** the DB, then re-run the pipeline on
   the copy offline with
-  `node src/node/tools/ingest.ts saved-links.sqlite [--reingest]`.
+  `node src/node/tools/ingest.ts linkosh.sqlite [--reingest]`.
   `node src/node/tools/capture-fixtures.ts <db.sqlite>` turns captured pages
   into parser regression fixtures (review and scrub before committing —
   bodies are verbatim).

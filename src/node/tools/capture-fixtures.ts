@@ -2,7 +2,7 @@
 // Dump raw_data rows from a .sqlite copy into per-provider fixture files so
 // a captured live page can become a checked-in parser regression test.
 //
-//   node src/node/tools/capture-fixtures.ts saved-links-export.sqlite [--provider id]
+//   node src/node/tools/capture-fixtures.ts linkosh-export.sqlite [--provider id]
 //     [--status failed] [--out tests/fixtures/captured]
 //
 // Each row becomes <out>/<provider>/<id>-<kind>.<json|html> plus a sibling

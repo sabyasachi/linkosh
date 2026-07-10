@@ -7,7 +7,7 @@
 //
 // Usage (build first — the page loads compiled JS from dist/src):
 //   npm run build && npm run ux
-//   node src/node/tools/ux-server.ts --db saved-links-export.sqlite
+//   node src/node/tools/ux-server.ts --db linkosh-export.sqlite
 //   node src/node/tools/ux-server.ts --port 5174
 //
 // With no --db it seeds a tiny in-memory database from parser fixtures so the
@@ -84,7 +84,7 @@ const devEmbedder: OrchestratorEmbedder = {
 export function createDevService(db: SqlDatabase): Handlers<BackgroundApi> {
   const workerApi: Handlers<DbWorkerApi> = {
     ...createDbService(db),
-    export: () => ({ file: "saved-links-dev.sqlite", size: 0 }), // download rides /api/export instead
+    export: () => ({ file: "linkosh-dev.sqlite", size: 0 }), // download rides /api/export instead
     rawIngest: (args) => ingestPending(db, args),
     rawReingest: (args) => reingest(db, args),
   };
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
         if (req.method === "GET" && req.url === "/api/export") {
           res.writeHead(200, {
             "content-type": "application/vnd.sqlite3",
-            "content-disposition": 'attachment; filename="saved-links-dev.sqlite"',
+            "content-disposition": 'attachment; filename="linkosh-dev.sqlite"',
           });
           return res.end(dbFile ? readFileSync(dbFile) : Buffer.from(await exportBytes(wasmDb!)));
         }
@@ -244,7 +244,7 @@ async function main(): Promise<void> {
   });
 
   server.listen(port, "127.0.0.1", () => {
-    console.log(`Saved Links UX server: http://127.0.0.1:${port}/`);
+    console.log(`Linkosh UX server: http://127.0.0.1:${port}/`);
     console.log(dbFile ? `Using disk DB ${dbFile}.` : "Loaded fixture-seeded in-memory DB.");
     console.log("Serving built assets from dist/src — run `npm run build` after UI edits.");
   });
