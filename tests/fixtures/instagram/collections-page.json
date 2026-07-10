@@ -1,0 +1,8 @@
+{
+  "items": [
+    { "collection_id": 111, "collection_name": "Recipes" },
+    { "collection_id": 222, "collection_name": "Travel" },
+    { "collection_name": "no-id-skipped" }
+  ],
+  "more_available": false
+}

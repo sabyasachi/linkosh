@@ -1,0 +1,69 @@
+{
+  "contents": {
+    "twoColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "content": {
+              "sectionListRenderer": {
+                "contents": [
+                  {
+                    "itemSectionRenderer": {
+                      "contents": [
+                        {
+                          "playlistVideoListRenderer": {
+                            "contents": [
+                              {
+                                "playlistVideoRenderer": {
+                                  "videoId": "abc123",
+                                  "title": { "runs": [{ "text": "A Long Video" }] },
+                                  "shortBylineText": { "runs": [{ "text": "Some Channel" }] },
+                                  "videoInfo": {
+                                    "runs": [{ "text": "1.2M views" }, { "text": " · " }, { "text": "2 years ago" }]
+                                  },
+                                  "lengthSeconds": "213",
+                                  "thumbnail": {
+                                    "thumbnails": [
+                                      { "url": "https://i.ytimg.com/120.jpg", "width": 120 },
+                                      { "url": "https://i.ytimg.com/336.jpg", "width": 336 }
+                                    ]
+                                  },
+                                  "thumbnailOverlays": []
+                                }
+                              },
+                              {
+                                "playlistVideoRenderer": {
+                                  "videoId": "short1",
+                                  "title": { "simpleText": "A Short" },
+                                  "shortBylineText": { "simpleText": "Chan" },
+                                  "lengthSeconds": "45",
+                                  "thumbnailOverlays": [
+                                    { "thumbnailOverlayTimeStatusRenderer": { "style": "SHORTS" } }
+                                  ]
+                                }
+                              },
+                              {
+                                "playlistVideoRenderer": { "videoId": "gone1", "isPlayable": false }
+                              },
+                              {
+                                "continuationItemRenderer": {
+                                  "continuationEndpoint": {
+                                    "continuationCommand": { "token": "cont-token-1" }
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

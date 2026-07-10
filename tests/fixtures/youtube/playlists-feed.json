@@ -1,0 +1,35 @@
+{
+  "contents": {
+    "sectionListRenderer": {
+      "contents": [
+        {
+          "gridRenderer": {
+            "items": [
+              {
+                "gridPlaylistRenderer": {
+                  "playlistId": "PL111",
+                  "title": { "simpleText": "Recipes" }
+                }
+              },
+              {
+                "lockupViewModel": {
+                  "contentType": "LOCKUP_CONTENT_TYPE_PLAYLIST",
+                  "contentId": "PL222",
+                  "metadata": {
+                    "lockupMetadataViewModel": { "title": { "content": "Workouts" } }
+                  }
+                }
+              },
+              {
+                "lockupViewModel": {
+                  "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+                  "contentId": "not-a-playlist"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

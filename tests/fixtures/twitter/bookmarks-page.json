@@ -1,0 +1,90 @@
+{
+  "data": {
+    "bookmark_timeline_v2": {
+      "timeline": {
+        "instructions": [
+          {
+            "type": "TimelineAddEntries",
+            "entries": [
+              {
+                "content": {
+                  "entryType": "TimelineTimelineItem",
+                  "itemContent": {
+                    "tweet_results": {
+                      "result": {
+                        "rest_id": "111",
+                        "core": {
+                          "user_results": {
+                            "result": {
+                              "core": { "screen_name": "jane", "name": "Jane Doe" },
+                              "avatar": { "image_url": "https://pbs.twimg.com/avatar-jane.jpg" }
+                            }
+                          }
+                        },
+                        "legacy": {
+                          "full_text": "Check this out https://t.co/abc https://t.co/media1",
+                          "created_at": "Wed Oct 10 20:19:24 +0000 2018",
+                          "entities": {
+                            "urls": [
+                              { "url": "https://t.co/abc", "expanded_url": "https://example.com/article" }
+                            ]
+                          },
+                          "extended_entities": {
+                            "media": [
+                              {
+                                "type": "video",
+                                "media_url_https": "https://pbs.twimg.com/media/1.jpg",
+                                "video_info": { "duration_millis": 63400 }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "content": {
+                  "entryType": "TimelineTimelineItem",
+                  "itemContent": {
+                    "tweet_results": {
+                      "result": {
+                        "tweet": {
+                          "rest_id": "222",
+                          "core": {
+                            "user_results": {
+                              "result": {
+                                "legacy": {
+                                  "screen_name": "bob",
+                                  "name": "Bob",
+                                  "profile_image_url_https": "https://pbs.twimg.com/avatar-bob.jpg"
+                                }
+                              }
+                            }
+                          },
+                          "legacy": {
+                            "full_text": "plain text tweet",
+                            "created_at": "Thu Jan 01 00:00:00 +0000 2026",
+                            "entities": {}
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "content": {
+                  "entryType": "TimelineTimelineCursor",
+                  "cursorType": "Bottom",
+                  "value": "cursor-bottom-1"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

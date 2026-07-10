@@ -1,0 +1,14 @@
+{
+  // Dedicated workers (DB + AI). WebWorker lib, no chrome types — chrome.*
+  // does not exist inside dedicated workers, and this config proves it.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../../dist/src/workers",
+    "tsBuildInfoFile": "../../.tsbuildinfo/workers",
+    "lib": ["ES2022", "WebWorker"],
+    "types": []
+  },
+  "include": ["**/*.ts"],
+  "references": [{ "path": "../core" }]
+}

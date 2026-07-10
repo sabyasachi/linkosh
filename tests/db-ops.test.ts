@@ -1,0 +1,286 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { openDb } from "./helpers/open-db.ts";
+import { upsert, list, search, count, clearItems, knownIds } from "../src/core/db/items.ts";
+import { storeEmbeddings } from "../src/core/db/embeddings.ts";
+import { ftsQuery } from "../src/core/fts.ts";
+import type { ParsedItem } from "../src/core/types.ts";
+
+const item = (externalId: string, extra: Partial<ParsedItem> = {}): ParsedItem => ({
+  externalId,
+  url: `https://example.com/${externalId}`,
+  title: `Title ${externalId}`,
+  ...extra,
+});
+
+test("upsert counts inserts vs updates", async () => {
+  const db = await openDb();
+  let res = upsert(db, { provider: "hackernews", account: "u", items: [item("a"), item("b")] });
+  assert.deepEqual(res, { inserted: 2, updated: 0 });
+  res = upsert(db, { provider: "hackernews", account: "u", items: [item("b"), item("c")] });
+  assert.deepEqual(res, { inserted: 1, updated: 1 });
+  assert.equal(count(db, { provider: "hackernews" }), 3);
+  db.close();
+});
+
+test("upsert keeps prior bookmarked_at and published_at when the new one is null", async () => {
+  const db = await openDb();
+  const times = () =>
+    db.rows<{ bookmarked_at: number; published_at: number }>(
+      "SELECT bookmarked_at, published_at FROM saved_items"
+    )[0]!;
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [item("a", { bookmarkedAt: 1111, publishedAt: 3333 })],
+  });
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [item("a", { bookmarkedAt: null, publishedAt: null })],
+  });
+  assert.deepEqual(times(), { bookmarked_at: 1111, published_at: 3333 });
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [item("a", { bookmarkedAt: 2222, publishedAt: 4444 })],
+  });
+  assert.deepEqual(times(), { bookmarked_at: 2222, published_at: 4444 });
+  db.close();
+});
+
+test("upsert stores 0-valued duration/bookmarkedAt/publishedAt as NULL", async () => {
+  // 0 means "absent" for these numeric fields; a stored 0 would defeat the
+  // COALESCE(bookmarked_at, published_at, 0) list sort and sink the row to
+  // epoch 0. (Regression guard: an earlier TS port used `?? null`, persisting 0.)
+  const db = await openDb();
+  upsert(db, {
+    provider: "substack",
+    account: "u",
+    items: [item("a", { duration: 0, bookmarkedAt: 0, publishedAt: 1780000000000 })],
+  });
+  const row = db.rows<{ duration: number | null; bookmarked_at: number | null; published_at: number | null }>(
+    "SELECT duration, bookmarked_at, published_at FROM saved_items"
+  )[0]!;
+  assert.equal(row.duration, null);
+  assert.equal(row.bookmarked_at, null); // 0 → NULL, so the sort falls through
+  assert.equal(row.published_at, 1780000000000); // a real timestamp is preserved
+  db.close();
+});
+
+test("upsert invalidates the embedding only when row text changes", async () => {
+  const db = await openDb();
+  upsert(db, { provider: "hackernews", account: "u", items: [item("a", { summary: "s" })] });
+  const id = db.rows<{ id: number }>("SELECT id FROM saved_items")[0]!.id;
+  storeEmbeddings(db, { model: "m1", rows: [{ id, vector: new Float32Array([1, 0]) }] });
+
+  const embeddingRow = () =>
+    db.rows<{ embedding: Uint8Array | null; embedding_model: string | null }>(
+      "SELECT embedding, embedding_model FROM saved_items"
+    )[0]!;
+
+  // Same text: embedding survives the upsert.
+  upsert(db, { provider: "hackernews", account: "u", items: [item("a", { summary: "s" })] });
+  assert.ok(embeddingRow().embedding);
+  assert.equal(embeddingRow().embedding_model, "m1");
+
+  // Changed text: embedding nulled, row back on the backlog.
+  upsert(db, { provider: "hackernews", account: "u", items: [item("a", { summary: "different" })] });
+  assert.equal(embeddingRow().embedding, null);
+  assert.equal(embeddingRow().embedding_model, null);
+  db.close();
+});
+
+test("upsert stores stats and merges collection arrays without re-embedding", async () => {
+  const db = await openDb();
+  upsert(db, {
+    provider: "youtube",
+    account: "u",
+    items: [
+      item("abc123", {
+        title: "A Long Video",
+        collection: ["Watch later"],
+        stats: { views: "1.2M views", age: "2 years ago" },
+      }),
+    ],
+  });
+  const id = db.rows<{ id: number }>("SELECT id FROM saved_items")[0]!.id;
+  storeEmbeddings(db, { model: "m1", rows: [{ id, vector: new Float32Array([1, 0]) }] });
+
+  upsert(db, {
+    provider: "youtube",
+    account: "u",
+    items: [
+      item("abc123", {
+        title: "A Long Video",
+        collection: ["Recipes", "Watch later"],
+        stats: { views: "2M views", age: "1 year ago" },
+      }),
+    ],
+  });
+
+  const row = db.rows<{
+    collection: string;
+    stats: string;
+    embedding: Uint8Array | null;
+    embedding_model: string | null;
+  }>("SELECT collection, stats, embedding, embedding_model FROM saved_items")[0]!;
+  assert.equal(row.collection, '["Watch later","Recipes"]');
+  assert.equal(row.stats, '{"views":"2M views","age":"1 year ago"}');
+  assert.ok(row.embedding);
+  assert.equal(row.embedding_model, "m1");
+
+  // Decoded SavedItem carries the merged array, and the FTS column filter finds it.
+  const hits = search(db, { query: 'collection:"watch later"' });
+  assert.deepEqual(hits.map((r) => r.externalId), ["abc123"]);
+  assert.deepEqual(hits[0]!.collection, ["Watch later", "Recipes"]);
+  assert.deepEqual(hits[0]!.stats, { views: "2M views", age: "1 year ago" });
+  db.close();
+});
+
+test("knownIds respects the createdBefore cutoff", async () => {
+  const db = await openDb();
+  const insert = (extId: string, createdAt: number) =>
+    db.run(
+      "INSERT INTO saved_items (provider, account, external_id, url, created_at) VALUES ('hackernews','u',?,'',?)",
+      [extId, createdAt]
+    );
+  insert("old", 1000);
+  insert("new", 2000);
+  assert.deepEqual(knownIds(db, { provider: "hackernews" }).sort(), ["new", "old"]);
+  assert.deepEqual(knownIds(db, { provider: "hackernews", createdBefore: 1500 }), ["old"]);
+  assert.deepEqual(knownIds(db, { provider: "twitter" }), []);
+  db.close();
+});
+
+test("list orders by bookmarked_at, then published_at, then created_at; paging is stable", async () => {
+  const db = await openDb();
+  const insert = (extId: string, bookmarkedAt: number | null, publishedAt: number | null, createdAt: number) =>
+    db.run(
+      `INSERT INTO saved_items
+        (provider, account, external_id, url, bookmarked_at, published_at, created_at)
+        VALUES ('hackernews','u',?,'',?,?,?)`,
+      [extId, bookmarkedAt, publishedAt, createdAt]
+    );
+  insert("bookmark-late", 5000, 1000, 1); // bookmarked_at wins overall
+  insert("bookmark-early", 4000, 9000, 1);
+  insert("published-late", null, 3000, 1);
+  insert("published-early", null, 2000, 1);
+  insert("sync2-a", null, null, 200); // no timestamps: newer sync first, id asc within
+  insert("sync2-b", null, null, 200);
+  insert("sync1-a", null, null, 100);
+
+  const order = list(db, {}).map((r) => r.externalId);
+  assert.deepEqual(order, [
+    "bookmark-late",
+    "bookmark-early",
+    "published-late",
+    "published-early",
+    "sync2-a",
+    "sync2-b",
+    "sync1-a",
+  ]);
+
+  const paged = [
+    ...list(db, { limit: 2, offset: 0 }),
+    ...list(db, { limit: 2, offset: 2 }),
+    ...list(db, { limit: 2, offset: 4 }),
+    ...list(db, { limit: 2, offset: 6 }),
+  ].map((r) => r.externalId);
+  assert.deepEqual(paged, order);
+  db.close();
+});
+
+test("ftsQuery quotes plain words, adds prefix star, passes operators through", () => {
+  assert.equal(ftsQuery("  "), null);
+  assert.equal(ftsQuery("hello world"), '"hello" "world"*');
+  assert.equal(ftsQuery('say "hi"'), 'say "hi"'); // quoted phrase: untouched
+  assert.equal(ftsQuery("kind:short cats"), "kind:short cats"); // column filter: untouched
+  assert.equal(ftsQuery("cats AND dogs"), "cats AND dogs");
+});
+
+test("search: plain text, prefix-as-you-type, column filter, provider scope", async () => {
+  const db = await openDb();
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [
+      item("1", { title: "Rust in production", kind: "story" }),
+      item("2", { title: "Cooking with cast iron", kind: "story" }),
+    ],
+  });
+  upsert(db, {
+    provider: "youtube",
+    account: "u",
+    items: [item("3", { title: "Rust tutorial", kind: "short" })],
+  });
+  upsert(db, {
+    provider: "linkedin",
+    account: "u",
+    items: [
+      item("4", {
+        title: "",
+        posterName: "Jane Doe",
+        posterHandle: "jane",
+        posterBio: "Distributed systems engineer",
+      }),
+    ],
+  });
+
+  assert.deepEqual(search(db, { query: "rust" }).map((r) => r.externalId).sort(), ["1", "3"]);
+  // last word acts as a prefix
+  assert.equal(search(db, { query: "cook" }).length, 1);
+  // provider scoping
+  assert.deepEqual(search(db, { provider: "youtube", query: "rust" }).map((r) => r.externalId), ["3"]);
+  // FTS column filter passes through
+  assert.deepEqual(search(db, { query: "kind:short" }).map((r) => r.externalId), ["3"]);
+  assert.deepEqual(search(db, { query: "poster_handle:jane" }).map((r) => r.externalId), ["4"]);
+  // poster_bio is structured display data, not search/ranking content.
+  assert.deepEqual(search(db, { query: "distributed systems engineer" }), []);
+  // empty query lists everything
+  assert.equal(search(db, { query: "  " }).length, 4);
+  db.close();
+});
+
+test("search falls back to a LIKE scan when the FTS query does not parse", async () => {
+  const db = await openDb();
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [item("1", { summary: 'he said "unbalanced things' })],
+  });
+  // Unterminated quote: passes the operator check, breaks FTS5, LIKE catches it.
+  const hits = search(db, { query: '"unbalanced' });
+  assert.deepEqual(hits.map((r) => r.externalId), ["1"]);
+  db.close();
+});
+
+test("count scopes by provider or spans all", async () => {
+  const db = await openDb();
+  upsert(db, { provider: "hackernews", account: "u", items: [item("1"), item("2")] });
+  upsert(db, { provider: "youtube", account: "u", items: [item("3")] });
+  assert.equal(count(db, { provider: "hackernews" }), 2);
+  assert.equal(count(db, {}), 3);
+  assert.equal(count(db), 3);
+  db.close();
+});
+
+test("clearItems deletes rows, keeps FTS consistent, can scope by provider", async () => {
+  const db = await openDb();
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [item("1", { title: "keep me hn" }), item("2")],
+  });
+  upsert(db, { provider: "youtube", account: "u", items: [item("3", { title: "keep me yt" })] });
+
+  assert.deepEqual(clearItems(db, { provider: "hackernews" }), { deleted: 2 });
+  assert.equal(count(db), 1);
+  // FTS triggers kept the index in step — deleted rows no longer match.
+  assert.equal(search(db, { query: "keep" }).length, 1);
+
+  assert.deepEqual(clearItems(db), { deleted: 1 });
+  assert.equal(count(db), 0);
+  assert.equal(search(db, { query: "keep" }).length, 0);
+  db.close();
+});

@@ -1,0 +1,35 @@
+{
+  "data": {
+    "data": {
+      "searchDashClustersByAll": {
+        "metadata": { "paginationToken": "TOKEN-1" }
+      }
+    }
+  },
+  "included": [
+    {
+      "$type": "com.linkedin.voyager.dash.search.EntityResultViewModel",
+      "entityUrn": "urn:li:fsd_entityResultViewModel:1",
+      "title": { "text": "Jane Doe" },
+      "primarySubtitle": { "text": "Staff Engineer at Example" },
+      "summary": { "text": "Thoughts on distributed systems…" },
+      "navigationUrl": "https://www.linkedin.com/feed/update/urn:li:activity:1",
+      "image": {
+        "attributes": [
+          {
+            "detailData": {
+              "vectorImage": {
+                "rootUrl": "https://media.licdn.com/dms/image/abc/",
+                "artifacts": [
+                  { "width": 400, "fileIdentifyingUrlPathSegment": "400w.jpg" },
+                  { "width": 100, "fileIdentifyingUrlPathSegment": "100w.jpg" }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    { "$type": "com.linkedin.voyager.dash.common.SomethingElse", "title": { "text": "ignored" } }
+  ]
+}

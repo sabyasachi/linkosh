@@ -1,0 +1,19 @@
+{
+  // Extension DOM pages (popup/page, options, offscreen). The only project
+  // with JSX: classic transform targeting the vendored Preact — components
+  // import { h, Fragment } from the vendored path explicitly, so the emit
+  // has no implicit runtime imports to resolve.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../../dist/src/pages",
+    "tsBuildInfoFile": "../../.tsbuildinfo/pages",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["chrome"],
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment"
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "references": [{ "path": "../core" }, { "path": "../ext" }]
+}

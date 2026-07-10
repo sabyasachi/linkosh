@@ -1,0 +1,41 @@
+{
+  "items": [
+    {
+      "media": {
+        "pk": 310000000000001,
+        "code": "C1abcDEfgh",
+        "product_type": "clips",
+        "media_type": 2,
+        "user": { "username": "janedoe", "full_name": "Jane Doe" },
+        "caption": { "text": "  A recipe reel caption  " },
+        "taken_at": 1700000000,
+        "video_duration": 12.6,
+        "saved_collection_ids": [111, 222, 999],
+        "image_versions2": {
+          "candidates": [
+            { "url": "https://cdn.example/150.jpg", "width": 150 },
+            { "url": "https://cdn.example/100.jpg", "width": 100 }
+          ]
+        }
+      }
+    },
+    {
+      "media": {
+        "pk": 310000000000002,
+        "code": "C2xyzABcde",
+        "media_type": 8,
+        "user": { "username": "bob" },
+        "carousel_media": [
+          {
+            "image_versions2": {
+              "candidates": [{ "url": "https://cdn.example/carousel.jpg", "width": 100 }]
+            }
+          }
+        ]
+      }
+    },
+    { "media": { "code": "no-pk-skipped" } }
+  ],
+  "more_available": true,
+  "next_max_id": "MAXID-2"
+}

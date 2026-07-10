@@ -1,0 +1,34 @@
+{
+  // Shared compiler options for every project. The toolchain contract:
+  //  - tsc is the ONLY build tool: 1:1 ESM emit into dist/, no bundler, so
+  //    worker string-URLs, import.meta.url vendor resolution and the
+  //    executeScript-injected functions survive byte-identical.
+  //  - Source imports are written with .ts extensions and rewritten to .js at
+  //    emit (rewriteRelativeImportExtensions), so Node >=23.6 runs the same
+  //    sources directly via native type stripping (tests, tools) with no build.
+  //  - erasableSyntaxOnly keeps Node's stripping representationally identical
+  //    to tsc's emit (no enums/namespaces/parameter properties).
+  //  - target ES2022 means tsc never injects downlevel helpers — load-bearing
+  //    for the injected functions (see src/injected/README.md).
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "importHelpers": false,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "composite": true,
+    "declaration": true,
+    "sourceMap": false
+  }
+}

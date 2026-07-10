@@ -1,0 +1,39 @@
+{
+  "edges": [
+    {
+      "node": {
+        "id": "save-node-1",
+        "savable": {
+          "__typename": "Video",
+          "savable_title": { "text": "A saved video title" },
+          "savable_permalink": "/watch/?v=123",
+          "playable_duration": 63.4,
+          "savable_image": { "uri": "https://scontent.example/video-thumb.jpg" },
+          "savable_attributes": [{ "text": "Some Page" }, { "text": "Followed" }]
+        },
+        "container_savable": {
+          "savable_actors": [{ "name": "Some Page", "url": "https://www.facebook.com/somepage" }]
+        },
+        "containing_lists": { "nodes": [{ "name": "Watch list" }, { "name": "Other" }] }
+      }
+    },
+    {
+      "node": {
+        "id": "save-node-2",
+        "savable": {
+          "__typename": "StoryPointer",
+          "savable_title": { "text": "A saved post's whole text" },
+          "url": "https://www.facebook.com/groups/1/posts/2/"
+        },
+        "container_savable": {
+          "savable_actors": [{ "name": "Semanti Mukhopadhyay", "url": "https://www.facebook.com/semanti.mukhopadhyay.9" }],
+          "story": {
+            "owner_group": { "__typename": "Group", "name": "Some Group", "id": "1" }
+          }
+        }
+      }
+    },
+    { "node": { "savable": { "__typename": "Video" } } }
+  ],
+  "page_info": { "end_cursor": "FBCURSOR-1", "has_next_page": true }
+}

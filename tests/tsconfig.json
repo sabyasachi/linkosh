@@ -1,0 +1,20 @@
+{
+  // node:test suite — runs from source via type stripping, never emits JS.
+  // outDir keeps the uniform dist mirror (see src/core/tsconfig.json).
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../dist/tests",
+    "emitDeclarationOnly": true,
+    "tsBuildInfoFile": "../.tsbuildinfo/tests",
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"],
+  "references": [
+    { "path": "../src/core" },
+    { "path": "../src/injected" },
+    { "path": "../src/ext" },
+    { "path": "../tsconfig.node.json" }
+  ]
+}

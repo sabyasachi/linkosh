@@ -1,0 +1,14 @@
+{
+  // Extension service-worker-side code: background, providers, chrome-backed
+  // adapters. chrome types + WebWorker lib (an MV3 service worker), no DOM.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../../dist/src/ext",
+    "tsBuildInfoFile": "../../.tsbuildinfo/ext",
+    "lib": ["ES2022", "WebWorker"],
+    "types": ["chrome"]
+  },
+  "include": ["**/*.ts"],
+  "references": [{ "path": "../core" }, { "path": "../injected" }]
+}

@@ -1,0 +1,14 @@
+<!doctype html>
+<!-- Dev-harness entry: the same Preact tree as popup/page, mounted by dev.js
+     against the Node ux-server (HTTP RPC) instead of the extension. Served by
+     `npm run ux`; inert inside the packed extension. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Saved Links (dev)</title>
+    <link rel="stylesheet" href="popup.css" />
+    <link rel="stylesheet" href="page.css" />
+    <script type="module" src="dev.js"></script>
+  </head>
+  <body class="page"></body>
+</html>

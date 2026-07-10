@@ -1,0 +1,18 @@
+{
+  // Pure domain core: no DOM, no chrome, no node globals — runs identically
+  // in workers, pages, the service worker and under Node.
+  //
+  // Every project's outDir sits at its repo-relative position under dist/
+  // (extension root = dist/src). This uniform mirror is load-bearing:
+  // rewriteRelativeImportExtensions refuses cross-project imports whose
+  // output-relative path differs from their input-relative path (TS2878).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../../dist/src/core",
+    "tsBuildInfoFile": "../../.tsbuildinfo/core",
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["**/*.ts"]
+}

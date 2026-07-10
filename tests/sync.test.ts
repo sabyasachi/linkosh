@@ -1,0 +1,291 @@
+// core/sync.ts exercised end-to-end with a scripted provider and a real
+// in-memory DB. The scripted provider speaks Substack's page shape so the
+// real parse registry runs — no parser fakes.
+import test from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { openDb } from "./helpers/open-db.ts";
+import { asyncDbApi } from "./helpers/async-db.ts";
+import { count } from "../src/core/db/items.ts";
+import { ingestPending } from "../src/core/ingest.ts";
+import { createSync } from "../src/core/sync.ts";
+import { ProviderError } from "../src/core/errors.ts";
+import type { Provider, ProviderId, ProviderMeta } from "../src/core/types.ts";
+
+const post = (id: number) => ({
+  post: {
+    id,
+    title: `Post ${id}`,
+    canonical_url: `https://x.substack.com/p/${id}`,
+    publishedBylines: [{ name: "Author" }],
+    post_date: "2026-01-01T00:00:00.000Z",
+    type: "post",
+  },
+});
+
+// One page body per element; newest-first across pages like the live service.
+const pageBody = (ids: number[], nextCursor: string | null) =>
+  JSON.stringify({ items: ids.map(post), nextCursor });
+const fixture = (path: string) => readFileSync(new URL(`./fixtures/${path}`, import.meta.url), "utf8");
+
+/** A provider that serves scripted page bodies and follows the real
+ *  stop-rule protocol (res.unseen / res.hasNext). */
+function scriptedProvider(pages: string[], { failAfterPage = Infinity }: { failAfterPage?: number } = {}) {
+  const stats = { fetched: 0 };
+  const provider: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      for (let i = 0; i < pages.length; i++) {
+        stats.fetched++;
+        const res = await onPage("tester", { kind: "items", url: `/saved?p=${i}`, page: i, body: pages[i]! });
+        if (i >= failAfterPage) throw new ProviderError("service hiccup");
+        if (res.unseen === 0 || !res.hasNext) break;
+      }
+      return { account: "tester" };
+    },
+  };
+  return { provider, stats };
+}
+
+function harness(provider: Provider, db: Parameters<typeof asyncDbApi>[0]) {
+  const meta = new Map<ProviderId, ProviderMeta>();
+  const synced: ProviderId[] = [];
+  const sync = createSync({
+    providers: { [provider.id]: provider },
+    db: asyncDbApi(db),
+    getMeta: async (id) => meta.get(id) ?? null,
+    setMeta: async (id, m) => void meta.set(id, m),
+    onSynced: (id) => synced.push(id),
+  });
+  return { sync, meta, synced };
+}
+
+test("full walk: every page lands, meta recorded, onSynced fired", async () => {
+  const db = await openDb();
+  const { provider, stats } = scriptedProvider([pageBody([3, 2], "c1"), pageBody([1], null)]);
+  const { sync, meta, synced } = harness(provider, db);
+
+  const res = await sync.syncProvider("substack");
+  assert.equal(res.status, "ok");
+  assert.deepEqual(
+    { inserted: res.inserted, updated: res.updated, total: res.total },
+    { inserted: 3, updated: 0, total: 3 }
+  );
+  assert.equal(stats.fetched, 2);
+  assert.ok(meta.get("substack")!.syncedAt > 0);
+  assert.ok(res.status === "ok" && res.syncedAt === meta.get("substack")!.syncedAt);
+  assert.deepEqual(synced, ["substack"]);
+  db.close();
+});
+
+test("incremental sync stops at the first page with nothing unseen", async () => {
+  const db = await openDb();
+  const first = scriptedProvider([pageBody([3, 2], "c1"), pageBody([1], null)]);
+  const h1 = harness(first.provider, db);
+  await h1.sync.syncProvider("substack");
+
+  // One new item appears at the top. Page 1 {4, 3} has one unseen item so
+  // paging continues; page 2 {2, 1} is all known — stop there, never
+  // touching page 3.
+  const second = scriptedProvider([
+    pageBody([4, 3], "c1"),
+    pageBody([2, 1], "c2"),
+    pageBody([0], null), // must never be fetched
+  ]);
+  const h2 = harness(second.provider, db);
+  h2.meta.set("substack", h1.meta.get("substack")!);
+
+  const res = await h2.sync.syncProvider("substack");
+  assert.equal(res.inserted, 1);
+  assert.equal(res.updated, 3); // known items 3, 2, 1 refreshed on the way
+  assert.equal(second.stats.fetched, 2); // ← the stop rule
+  assert.equal(res.total, 4);
+
+  // full: true ignores knownIds and re-walks everything.
+  const third = scriptedProvider([pageBody([4, 3], "c1"), pageBody([2, 1], null)]);
+  const h3 = harness(third.provider, db);
+  h3.meta.set("substack", h2.meta.get("substack")!);
+  const fullRes = await h3.sync.syncProvider("substack", { full: true });
+  assert.equal(third.stats.fetched, 2);
+  assert.equal(fullRes.updated, 4);
+  db.close();
+});
+
+test("partial failure keeps landed pages, reports the error, skips setMeta", async () => {
+  const db = await openDb();
+  const { provider } = scriptedProvider(
+    [pageBody([3, 2], "c1"), pageBody([1], null)],
+    { failAfterPage: 0 } // throw right after the first page landed
+  );
+  const { sync, meta, synced } = harness(provider, db);
+
+  const res = await sync.syncProvider("substack");
+  assert.equal(res.status, "partial");
+  assert.equal(res.inserted, 2); // first page kept
+  assert.ok(res.status === "partial");
+  assert.equal(res.error, "service hiccup");
+  assert.equal(res.needsLogin, false);
+  assert.equal(meta.get("substack"), undefined); // failed run never counts as "last good sync"
+  assert.deepEqual(synced, ["substack"]); // pages landed → embedding still kicked
+  db.close();
+});
+
+test("a failure with nothing landed reports status failed (no throw)", async () => {
+  const db = await openDb();
+  const provider: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems() {
+      throw new ProviderError("Not logged in", { needsLogin: true });
+    },
+  };
+  const { sync, meta, synced } = harness(provider, db);
+  const res = await sync.syncProvider("substack");
+  assert.equal(res.status, "failed");
+  assert.ok(res.status === "failed");
+  assert.equal(res.error, "Not logged in");
+  assert.equal(res.needsLogin, true);
+  assert.deepEqual({ inserted: res.inserted, updated: res.updated, captured: res.captured }, { inserted: 0, updated: 0, captured: 0 });
+  assert.equal(meta.get("substack"), undefined);
+  assert.deepEqual(synced, []); // nothing landed → no embedding kick
+  db.close();
+});
+
+test("unknown provider id still throws (programmer error, not a sync outcome)", async () => {
+  const db = await openDb();
+  const { provider } = scriptedProvider([pageBody([1], null)]);
+  const { sync } = harness(provider, db);
+  await assert.rejects(() => sync.syncProvider("twitter"), /Unknown provider/);
+  db.close();
+});
+
+test("capture mode archives raw pages, leaves saved_items alone, and raw ingest replays them", async () => {
+  const db = await openDb();
+  const first = scriptedProvider([pageBody([3, 2], "c1"), pageBody([1], null)]);
+  const h1 = harness(first.provider, db);
+
+  const res = await h1.sync.syncProvider("substack", { captureRaw: true });
+  assert.equal(res.status, "ok");
+  assert.equal(res.captured, 2);
+  assert.equal(res.inserted, 0);
+  assert.equal(count(db, {}), 0); // pristine baseline
+  const raw = db.rows<{ external_ids: string; status: string }>("SELECT * FROM raw_data ORDER BY id");
+  assert.equal(raw.length, 2);
+  assert.deepEqual(JSON.parse(raw[0]!.external_ids), ["post:3", "post:2"]);
+  assert.equal(raw[0]!.status, "pending");
+
+  // Incremental capture: the archive counts as known (rawKnownIds), so the
+  // provider stops after one page even though saved_items is still empty.
+  const second = scriptedProvider([pageBody([3, 2], "c1"), pageBody([1], null)]);
+  const h2 = harness(second.provider, db);
+  h2.meta.set("substack", h1.meta.get("substack")!);
+  await h2.sync.syncProvider("substack", { captureRaw: true });
+  assert.equal(second.stats.fetched, 1);
+  assert.equal(db.rows<{ n: number }>("SELECT COUNT(*) n FROM raw_data")[0]!.n, 3); // the re-fetched first page is archived too
+
+  // Raw ingest: the same shared pipeline moves the archive into saved_items.
+  const ingested = ingestPending(db);
+  assert.equal(ingested.inserted, 3);
+  assert.equal(count(db, {}), 3);
+  db.close();
+});
+
+test("youtube sync merges the same video from multiple playlists into one row", async () => {
+  const db = await openDb();
+  const body = fixture("youtube/playlist-page.json");
+  const provider: Provider = {
+    id: "youtube",
+    label: "YouTube",
+    async fetchItems({ onPage }) {
+      await onPage("tester", {
+        kind: "items",
+        url: "youtubei/v1/browse#VLWL",
+        page: 0,
+        context: { playlistId: "WL", collection: "Watch later" },
+        body,
+      });
+      await onPage("tester", {
+        kind: "items",
+        url: "youtubei/v1/browse#VLPL111",
+        page: 0,
+        context: { playlistId: "PL111", collection: "Recipes" },
+        body,
+      });
+      return { account: "tester" };
+    },
+  };
+  const { sync } = harness(provider, db);
+
+  const res = await sync.syncProvider("youtube");
+  assert.equal(res.inserted, 2);
+  assert.equal(res.updated, 2);
+  assert.equal(count(db, { provider: "youtube" }), 2);
+  const row = db.rows<{ external_id: string; collection: string }>(
+    "SELECT external_id, collection FROM saved_items WHERE external_id = 'abc123'"
+  )[0]!;
+  assert.equal(row.external_id, "abc123");
+  assert.equal(row.collection, '["Watch later","Recipes"]');
+  db.close();
+});
+
+test("test mode caps a run at ~maxItems and stops paging early", async () => {
+  const db = await openDb();
+  // Three pages of 2 items each; a cap of 3 should stop after page 2 (4 items
+  // collected) and never fetch page 3.
+  const { provider, stats } = scriptedProvider([
+    pageBody([6, 5], "c1"),
+    pageBody([4, 3], "c2"),
+    pageBody([2, 1], null),
+  ]);
+  const { sync } = harness(provider, db);
+
+  const res = await sync.syncProvider("substack", { maxItems: 3 });
+  assert.equal(stats.fetched, 2); // page 3 never requested
+  assert.equal(res.inserted, 4);
+  assert.equal(count(db, {}), 4);
+  db.close();
+});
+
+test("no cap (maxItems 0) walks everything", async () => {
+  const db = await openDb();
+  const { provider, stats } = scriptedProvider([
+    pageBody([6, 5], "c1"),
+    pageBody([4, 3], "c2"),
+    pageBody([2, 1], null),
+  ]);
+  const { sync } = harness(provider, db);
+  const res = await sync.syncProvider("substack", { maxItems: 0 });
+  assert.equal(stats.fetched, 3);
+  assert.equal(res.inserted, 6);
+  db.close();
+});
+
+test("syncAllProviders aggregates counts and carries per-provider reports", async () => {
+  const db = await openDb();
+  const ok = scriptedProvider([pageBody([1], null)]);
+  const broken: Provider = {
+    id: "hackernews",
+    label: "Hacker News",
+    async fetchItems() {
+      throw new Error("boom");
+    },
+  };
+  const meta = new Map<ProviderId, ProviderMeta>();
+  const sync = createSync({
+    providers: { substack: ok.provider, hackernews: broken },
+    db: asyncDbApi(db),
+    getMeta: async (id) => meta.get(id) ?? null,
+    setMeta: async (id, m) => void meta.set(id, m),
+  });
+  const res = await sync.syncAllProviders();
+  assert.equal(res.inserted, 1);
+  assert.equal(res.reports.length, 2);
+  const hn = res.reports.find((r) => r.providerId === "hackernews")!;
+  assert.equal(hn.status, "failed");
+  assert.ok(hn.status === "failed");
+  assert.equal(hn.error, "boom");
+  const ss = res.reports.find((r) => r.providerId === "substack")!;
+  assert.equal(ss.status, "ok");
+  db.close();
+});

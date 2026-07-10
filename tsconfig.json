@@ -1,0 +1,15 @@
+{
+  // Solution file: `tsc -b` builds every project. Each project pins the
+  // minimal lib/types for its runtime context so globals can't leak across
+  // container boundaries (core has no DOM/chrome/node; workers no chrome; …).
+  "files": [],
+  "references": [
+    { "path": "./src/core" },
+    { "path": "./src/injected" },
+    { "path": "./src/workers" },
+    { "path": "./src/ext" },
+    { "path": "./src/pages" },
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tests" }
+  ]
+}

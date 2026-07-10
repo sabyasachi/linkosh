@@ -1,0 +1,28 @@
+{
+  "items": [
+    {
+      "post": {
+        "id": 9001,
+        "title": "On Writing Well",
+        "subtitle": "A post subtitle",
+        "canonical_url": "https://example.substack.com/p/on-writing-well",
+        "publishedBylines": [{ "name": "Jane Doe" }],
+        "post_date": "2026-01-02T03:04:05.000Z",
+        "type": "newsletter"
+      },
+      "publication": { "name": "Example Letters" },
+      "saved_at": "2026-02-03T00:00:00.000Z"
+    },
+    {
+      "comment": {
+        "id": 7001,
+        "body": "  a saved note body  ",
+        "name": "Bob",
+        "handle": "bobwrites",
+        "photo_url": "https://substackcdn.example/bob.png",
+        "date": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  ],
+  "nextCursor": "CURSOR-2"
+}

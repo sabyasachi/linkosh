@@ -1,0 +1,266 @@
+:root {
+  --bg: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #6e6e73;
+  --border: #e3e3e6;
+  --accent: #0a66c2; /* LinkedIn blue, doubles as generic accent */
+  --hover: #f5f7fa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e20;
+    --fg: #f2f2f4;
+    --muted: #9a9aa0;
+    --border: #3a3a3e;
+    --hover: #2a2a2e;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  width: 420px;
+  max-height: 580px;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+h1 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.controls {
+  display: flex;
+  gap: 6px;
+}
+
+select,
+button {
+  font: inherit;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+button#refresh {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button#full-sync {
+  padding: 4px 8px;
+}
+
+#search-row {
+  display: flex;
+  gap: 6px;
+  margin: 8px 12px 0;
+}
+
+#search-row[hidden] {
+  display: none;
+}
+
+#search {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* Hybrid / Text / Semantic */
+#search-mode {
+  flex: none;
+}
+
+/* Dev tools row, shown only while capture mode is on (see popup.js). */
+#dev-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#dev-row[hidden] {
+  display: none;
+}
+
+#dev-row #raw-stats {
+  flex: 1;
+  min-width: 0;
+}
+
+#dev-row button {
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+#status {
+  padding: 6px 12px;
+  color: var(--muted);
+}
+
+#status.error {
+  color: #c62828;
+}
+
+ul#list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 8px;
+  overflow-y: auto;
+}
+
+li.item {
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+}
+
+li.item a {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  text-decoration: none;
+  color: inherit;
+}
+
+li.item a:hover {
+  background: var(--hover);
+}
+
+/* "More like this": sibling of the <a> so clicks don't navigate. */
+button.similar {
+  flex: none;
+  margin-right: 10px;
+  padding: 2px 8px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+button.similar:hover {
+  color: var(--accent);
+}
+
+/* Small ✕ appended to the status line while showing similar items. */
+button.reset-similar {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+button.reset-similar:hover {
+  color: var(--fg);
+}
+
+/* Infinite-scroll trigger: needs height to intersect, must not look like an item. */
+li.sentinel {
+  height: 1px;
+}
+
+.thumb {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--hover);
+}
+
+.thumb.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.text {
+  min-width: 0;
+}
+
+.title {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Author of the saved content ("by Jane Doe") — the lead line for posts,
+   which have a poster but no title. */
+.poster {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.poster-title-item .title {
+  font-weight: 400;
+}
+
+.publication {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary {
+  color: var(--muted);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.meta {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

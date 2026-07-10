@@ -1,0 +1,22 @@
+{
+  "name": "saved-links",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Toolchain for the saved-links extension: tsc compiles src/ 1:1 into dist/ (the unpacked-extension dir); tests and tools run the same .ts sources directly under Node via native type stripping. Zero runtime dependencies by design — vendor/ carries the only third-party code.",
+  "type": "module",
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "compare-db": "node src/node/tools/compare-sqlite.ts",
+    "typecheck": "tsc -b",
+    "test": "tsc -b && node --test 'tests/**/*.test.ts'",
+    "ux": "node src/node/tools/ux-server.ts"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.2.2",
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  }
+}

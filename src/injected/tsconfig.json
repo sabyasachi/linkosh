@@ -1,0 +1,14 @@
+{
+  // Functions serialized into third-party pages via executeScript. DOM lib
+  // (they run in page contexts), no chrome types, and — enforced by the guard
+  // test rather than the compiler — no imports whatsoever.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "../../dist/src/injected",
+    "tsBuildInfoFile": "../../.tsbuildinfo/injected",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": []
+  },
+  "include": ["**/*.ts"]
+}

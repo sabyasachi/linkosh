@@ -1,0 +1,17 @@
+{
+  // Node-only code: the build script, CLI tools, dev harness and the
+  // WASM-under-Node / node:sqlite adapters. Runs straight from source via
+  // Node's type stripping — declarations only, no JS emit. outDir keeps the
+  // uniform dist mirror required by rewriteRelativeImportExtensions.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist",
+    "emitDeclarationOnly": true,
+    "tsBuildInfoFile": "./.tsbuildinfo/node",
+    "lib": ["ES2022"],
+    "types": ["node"]
+  },
+  "include": ["scripts/**/*.ts", "src/node/**/*.ts"],
+  "references": [{ "path": "./src/core" }, { "path": "./src/ext" }]
+}
