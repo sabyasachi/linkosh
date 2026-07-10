@@ -11,6 +11,7 @@ export function toVector(blob: Uint8Array): Float32Array {
 
 export interface PendingEmbeddingRow {
   id: number;
+  url: string;
   title: string | null;
   publication: string | null;
   summary: string | null;
@@ -24,7 +25,7 @@ export function pendingEmbeddings(
   { model, limit = 64 }: { model: string; limit?: number }
 ): PendingEmbeddingRow[] {
   return db.rows<PendingEmbeddingRow>(
-    `SELECT id, title, publication, summary FROM saved_items
+    `SELECT id, url, title, publication, summary FROM saved_items
      WHERE embedding IS NULL OR embedding_model IS NOT ?
      ORDER BY id DESC LIMIT ?`,
     [model, limit]

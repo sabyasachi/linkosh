@@ -116,6 +116,7 @@ function OptionsApp() {
   const [keys, setKeys] = useState<Record<KeyName, string>>({ openai: "", gemini: "", voyage: "", anthropic: "" });
   const [saveStatus, setSaveStatus] = useState("");
   const [saving, setSaving] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const [aiStatus, setAiStatus] = useState("Loading…");
   const [deleteStatus, setDeleteStatus] = useState("");
   const [deleting, setDeleting] = useState(false);
@@ -334,13 +335,20 @@ function OptionsApp() {
       <div id="ai-status">{aiStatus}</div>
       <button
         id="rebuild"
+        disabled={rebuilding}
         title="Embed all items that don't have an up-to-date embedding"
         onClick={() => {
-          void api.embed({}).catch(() => {});
-          void refreshStatus();
+          setRebuilding(true);
+          void api
+            .embed({})
+            .catch((error) => setAiStatus(`Error: ${errorText(error)}`))
+            .finally(() => {
+              setRebuilding(false);
+              void refreshStatus();
+            });
         }}
       >
-        Rebuild embeddings
+        {rebuilding ? "Rebuilding embeddings…" : "Rebuild embeddings"}
       </button>
 
       <h2>Developer</h2>

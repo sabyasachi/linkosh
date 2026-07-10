@@ -59,9 +59,19 @@ const handlers: Handlers<EmbedderApi> = {
   },
 
   async embed({ texts }) {
-    initError = null;
-    await ensureInit();
-    return provider.embed(texts);
+    try {
+      await ensureInit();
+      const vectors = await provider.embed(texts);
+      initError = null;
+      return vectors;
+    } catch (e: unknown) {
+      // init() failures are recorded by ensureInit; cloud providers initialize
+      // trivially and fail here instead (bad key, quota, permission, input,
+      // network). Keep either kind visible through aiStatus until a successful
+      // embed or provider reconfiguration clears it.
+      initError = e instanceof Error ? e.message : String(e);
+      throw e;
+    }
   },
 };
 

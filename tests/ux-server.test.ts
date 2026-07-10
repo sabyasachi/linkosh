@@ -50,7 +50,7 @@ test("dev service: fixture seed + search over the fake embedding space", async (
   const fts = await service.search({ provider: null, query: "coffee OR story", mode: "fts" });
   assert.equal(fts.mode, "fts");
 
-  await service.embed({}); // kick + await is fine: embed() itself is fire-and-forget
+  await service.embed({}); // explicit rebuild waits for the backlog to drain
   const status = await service.aiStatus({});
   assert.equal(status.model, "dev:token-hash");
 

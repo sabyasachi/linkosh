@@ -155,7 +155,12 @@ test("overlapping embedBacklog triggers coalesce (single-flight)", async () => {
   db.close();
 });
 
-test("rowText joins title/publication/summary and truncates at 1000 chars", () => {
+test("rowText joins content, falls back for empty rows, and truncates at 1000 chars", () => {
   assert.equal(rowText({ title: "t", publication: "", summary: "s" }), "t\ns");
+  assert.equal(
+    rowText({ title: "", publication: null, summary: null, url: "https://example.com/useful-slug" }),
+    "https://example.com/useful-slug"
+  );
+  assert.equal(rowText({ title: " ", publication: null, summary: null, url: "" }), "Saved item");
   assert.equal(rowText({ title: "x".repeat(2000), publication: null, summary: null }).length, 1000);
 });

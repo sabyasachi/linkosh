@@ -43,8 +43,8 @@ export interface BackgroundApi {
   /** Asked by the offscreen orchestrator at creation (it can't read
    *  chrome.storage itself). */
   getAiSettings(args: Record<string, never>): AiSettings | null;
-  /** Fire-and-forget backlog kick: embedding can run for minutes; the RPC
-   *  response never waits for it. */
+  /** Explicit backlog rebuild. Unlike automatic post-sync kicks, this waits
+   *  so the options page can report an API/model failure to the user. */
   embed(args: Record<string, never>): void;
   exportDb(args: Record<string, never>): { file: string; size: number };
   /** Delete items (all providers) and reset sync state; raw_data untouched. */
@@ -124,7 +124,7 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
 
     getAiSettings: async () => (await prefs.get("ai:settings")) ?? null,
 
-    embed: () => embedSoon(),
+    embed: () => ai.embedBacklog({}),
 
     exportDb: () => db.export({}),
 

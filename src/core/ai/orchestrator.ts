@@ -18,8 +18,17 @@ import { FTS_OPERATORS } from "../fts.ts";
 // Row text fed to the embedding model; truncated so one pathological summary
 // can't blow up inference time. Poster is deliberately excluded — it would
 // cluster embeddings by author. Exported for tests.
-export function rowText({ title, publication, summary }: Pick<PendingEmbeddingRow, "title" | "publication" | "summary">): string {
-  return [title, publication, summary].filter(Boolean).join("\n").slice(0, 1000);
+export function rowText({
+  title,
+  publication,
+  summary,
+  url,
+}: Pick<PendingEmbeddingRow, "title" | "publication" | "summary"> & { url?: string | null }): string {
+  const content = [title, publication, summary].filter(Boolean).join("\n").trim();
+  // Cloud embedding APIs reject empty strings. A URL still carries useful
+  // semantic signal through its host/path; the final label handles malformed
+  // or synthetic rows whose URL is empty too, without wedging the whole batch.
+  return (content || url?.trim() || "Saved item").slice(0, 1000);
 }
 
 /** The DB surface the orchestrator drives (promise-shaped: satisfied by a
