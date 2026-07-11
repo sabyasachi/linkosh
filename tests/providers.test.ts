@@ -305,7 +305,7 @@ test("hackernews: a rate-limit page surfaces as a readable ProviderError", async
 // instagram (injected in MAIN world; transient-throttle retry/backoff)
 // ---------------------------------------------------------------------------
 
-const IG_COOKIES = { sessionid: "s", csrftoken: "csrf" };
+const IG_COOKIES = { sessionid: "s", csrftoken: "csrf", ds_user_id: "123" };
 
 /** Script igApiGet responses by URL path. `feed` receives the request path
  *  (so a test can assert the resume cursor) and gets a per-call sequence so a
@@ -328,6 +328,46 @@ function instagramExec(handlers: {
 }
 
 const IG_TERMINAL = JSON.stringify({ items: [], more_available: false });
+
+test("instagram: repairs a drifted current-account lookup via ds_user_id", async () => {
+  const db = await openDb();
+  const requested: string[] = [];
+  let feedCall = 0;
+  const { env } = fakeEnv({
+    cookies: IG_COOKIES,
+    onExec: ({ fn, args }) => {
+      assert.equal(fn, igApiGet);
+      const path = args[0] as string;
+      requested.push(path);
+      if (path === "/api/v1/accounts/current_user/") {
+        return { status: 404, body: "{}" }; // observed lookup no longer produced a username
+      }
+      if (path === "/api/v1/users/123/info/") {
+        return { status: 200, body: JSON.stringify({ user: { username: "jane" } }) };
+      }
+      if (path.startsWith("/api/v1/collections/list/")) {
+        return { status: 200, body: JSON.stringify({ items: [], more_available: false }) };
+      }
+      if (path.startsWith("/api/v1/feed/saved/posts/")) {
+        feedCall++;
+        return {
+          status: 200,
+          body: feedCall === 1 ? fixture("instagram/saved-feed-page.json") : IG_TERMINAL,
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    },
+  });
+
+  const res = await runSync(createInstagram(env), db);
+  assert.equal(res.status, "ok");
+  assert.deepEqual(
+    db.rows<{ account: string }>("SELECT DISTINCT account FROM saved_items WHERE provider = 'instagram'"),
+    [{ account: "jane" }]
+  );
+  assert.ok(requested.includes("/api/v1/users/123/info/"));
+  db.close();
+});
 
 test("instagram: injects in MAIN world and rides through a 572 throttle", async () => {
   const db = await openDb();

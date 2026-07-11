@@ -140,17 +140,36 @@ export function createProvider(env: ProviderEnv): Provider {
     return collections;
   }
 
-  /** The logged-in user's handle, e.g. "sabyasachiruj". */
+  /** The logged-in user's handle, e.g. "sabyasachiruj". Instagram's
+   *  current_user response has varied between nested and top-level shapes,
+   *  and in 2026-07 it stopped yielding a user for some web sessions. The
+   *  ds_user_id cookie is the stable account id used by Instagram itself, so
+   *  use it to ask the user-info endpoint before giving up. Account lookup is
+   *  decoration for row partitioning: only an auth failure should abort the
+   *  otherwise healthy saved-feed sync. */
   async function getAccount(tabId: number, csrfToken: string): Promise<string> {
-    try {
-      const json = JSON.parse(await apiGet(tabId, "/api/v1/accounts/current_user/", csrfToken)) as {
-        user?: { username?: string };
-      };
-      return json?.user?.username || "unknown";
-    } catch (e) {
-      if (e instanceof ProviderError) throw e;
-      return "unknown";
+    const dsUserId = await env.getCookie(ORIGIN, "ds_user_id");
+    const paths = [
+      "/api/v1/accounts/current_user/",
+      ...(dsUserId ? [`/api/v1/users/${encodeURIComponent(dsUserId)}/info/`] : []),
+    ];
+
+    for (const path of paths) {
+      try {
+        const json = JSON.parse(await apiGet(tabId, path, csrfToken)) as {
+          username?: string;
+          user?: { username?: string };
+          data?: { username?: string; user?: { username?: string } };
+        };
+        const username = json.user?.username || json.username || json.data?.user?.username || json.data?.username;
+        if (username) return username;
+      } catch (e) {
+        if (e instanceof ProviderError && e.needsLogin) throw e;
+        // A removed endpoint, changed response shape or transient failure can
+        // fall through to the ds_user_id-backed candidate below.
+      }
     }
+    return "unknown";
   }
 
   /** Pace between pages, jittered so a fixed request cadence doesn't line up
