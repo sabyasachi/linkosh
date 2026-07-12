@@ -64,6 +64,15 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Thrown out of onPage when the stop token aborts — unwinds the provider's
+ *  walk at its next page boundary with zero provider changes (providers just
+ *  propagate it like any fetch failure). */
+class SyncStopped extends Error {
+  constructor() {
+    super("Sync stopped");
+  }
+}
+
 export function createSync({ providers, db, getMeta, setMeta, onSynced }: CreateSyncOptions): Sync {
   // maxItems (0 = unlimited): "test mode" — stop a run once it has collected
   // roughly this many items, so a provider can be smoke-tested without a full
@@ -73,7 +82,7 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
   // little more than maxItems across those.
   async function syncProvider(
     providerId: ProviderId,
-    { full = false, captureRaw = false, maxItems = 0 }: SyncOptions = {}
+    { full = false, captureRaw = false, maxItems = 0, stop }: SyncOptions = {}
   ): Promise<SyncReport> {
     const provider = providers[providerId];
     if (!provider) throw new Error(`Unknown provider: ${providerId}`); // programmer error, not a sync outcome
@@ -110,6 +119,11 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
     // rule). Each page is persisted before the next request, so the popup can
     // show progress and a mid-sync failure keeps everything fetched so far.
     const onPage = async (account: string, rawPage: RawPage): Promise<PageOutcome> => {
+      // Stop token, checked at the same choke point as the maxItems cap: every
+      // provider passes each page through here, so all of them stop at their
+      // next page boundary. The already-fetched page is dropped un-persisted —
+      // the untouched watermark re-covers it next sync.
+      if (stop?.aborted) throw new SyncStopped();
       const fetchedAt = Date.now();
       const parsed = parsePage(providerId, {
         kind: rawPage.kind,
@@ -148,10 +162,16 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
       return { ...parsed, items: kept, unseen: unseenOut };
     };
 
+    let stopped = false;
     try {
       await provider.fetchItems({ knownIds, onPage });
+      // A provider can finish its walk without calling onPage again after the
+      // abort flipped — an abort during the run still must not count as a
+      // clean sync (no watermark), or the next incremental run would trust it.
+      if (stop?.aborted) stopped = true;
     } catch (e) {
-      error = e; // classified below: partial if anything landed, failed otherwise
+      if (e instanceof SyncStopped) stopped = true;
+      else error = e; // classified below: partial if anything landed, failed otherwise
     }
 
     const counts = {
@@ -161,6 +181,16 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
       captured,
       total: await db.count({ provider: providerId }),
     };
+
+    // Stopped runs share the failure invariant: setMeta is skipped, so the
+    // untouched watermark makes the next incremental sync re-cover the gap.
+    if (stopped) {
+      if (inserted === 0 && updated === 0 && captured === 0) {
+        return { ...counts, status: "failed", error: "Sync stopped", needsLogin: false, stopped: true };
+      }
+      onSynced?.(providerId); // landed pages still need embeddings
+      return { ...counts, status: "partial", error: "Sync stopped", needsLogin: false, stopped: true };
+    }
 
     if (error) {
       const needsLogin = error instanceof ProviderError ? error.needsLogin : false;
@@ -184,6 +214,7 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
     const reports: SyncReport[] = [];
     for (const provider of Object.values(providers)) {
       if (!provider) continue;
+      if (opts.stop?.aborted) break; // stop between providers; finished reports stand
       reports.push(await syncProvider(provider.id, opts));
     }
     return {

@@ -110,6 +110,26 @@ const service = createBackgroundService({
   prefs,
 });
 
+// MV3 kills a service worker after 30s without extension-API activity
+// (Chrome 110+: any extension-API call resets the timer). Most of a sync
+// resets it incidentally (every onPage → chrome.runtime RPC to offscreen),
+// but a single slow fetch()+sleep() stretch in a direct provider makes no
+// chrome.* calls — so tick a cheap one while a sync is in flight. Chrome-side
+// only: the Node dev harness has no idle timer. syncStop is the escape hatch
+// if a fetch truly hangs.
+function withKeepalive<Args, R>(fn: (args: Args) => R | Promise<R>): (args: Args) => Promise<R> {
+  return async (args) => {
+    const tick = setInterval(() => void chrome.runtime.getPlatformInfo(), 20_000);
+    try {
+      return await fn(args);
+    } finally {
+      clearInterval(tick);
+    }
+  };
+}
+service.sync = withKeepalive(service.sync);
+service.syncAll = withKeepalive(service.syncAll);
+
 serveRuntime<BackgroundApi>(runtime, "background", service);
 
 // Drain any embedding backlog left over from a browser restart or a crash

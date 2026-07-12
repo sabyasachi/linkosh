@@ -114,6 +114,7 @@ export function App({ runtime }: { runtime: Runtime }) {
   const [query, setQuery] = useState("");
   const [searchMode, setSearchMode] = useState<SearchMode>("fts");
   const [syncing, setSyncing] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [showSearchRow, setShowSearchRow] = useState(false);
 
   const providerLabels = useMemo(() => new Map(providers.map((p) => [p.id, p.label])), [providers]);
@@ -128,6 +129,18 @@ export function App({ runtime }: { runtime: Runtime }) {
   const generationRef = useRef(0);
   const providerRef = useRef<ProviderChoice>(ALL);
   providerRef.current = provider;
+  // Which feature owns the item list right now. Background view-writers (the
+  // sync progress poll, the post-sync refresh) may only touch a "list" view —
+  // a search or "more like this" started mid-sync must not be clobbered.
+  const viewRef = useRef<"list" | "search" | "similar">("list");
+  // Current query/mode for callbacks created before the latest keystroke
+  // (the post-sync search restore).
+  const queryRef = useRef("");
+  queryRef.current = query;
+  const searchModeRef = useRef<SearchMode>("fts");
+  searchModeRef.current = searchMode;
+  const stoppingRef = useRef(false);
+  stoppingRef.current = stopping;
 
   const listStatus = useCallback((total: number, lastMeta: ProviderMeta | null) => {
     // meta is null in the All view (each provider has its own sync time).
@@ -140,6 +153,7 @@ export function App({ runtime }: { runtime: Runtime }) {
 
   const loadItems = useCallback(
     async (providerChoice: ProviderChoice = providerRef.current) => {
+      viewRef.current = "list";
       const gen = ++generationRef.current;
       try {
         const res = await api.listItems({
@@ -206,6 +220,11 @@ export function App({ runtime }: { runtime: Runtime }) {
           setSearchMode(storedMode);
         }
         await loadItems(choice);
+        // A sync may already be running (started by another surface, or by a
+        // popup instance that has since closed) — reattach instead of showing
+        // an idle Sync button over a live sync.
+        const st = await api.syncStatus({}).catch(() => null);
+        if (st?.running) void watchSync();
       } catch (e) {
         setStatus({ text: errorText(e), error: true });
       }
@@ -243,6 +262,7 @@ export function App({ runtime }: { runtime: Runtime }) {
     async (text: string, mode: SearchMode) => {
       const trimmed = text.trim();
       if (!trimmed) return loadItems();
+      viewRef.current = "search";
       const gen = ++generationRef.current; // stop in-flight list pages from appending
       const usesVectorIntent = mode !== "fts" && !FTS_OPERATORS.test(trimmed);
       setStatus({
@@ -305,6 +325,7 @@ export function App({ runtime }: { runtime: Runtime }) {
 
   const showSimilar = useCallback(
     async (item: SavedItem) => {
+      viewRef.current = "similar";
       const gen = ++generationRef.current; // stop in-flight list pages from appending
       try {
         const similar = await api.similar({
@@ -335,67 +356,134 @@ export function App({ runtime }: { runtime: Runtime }) {
 
   // ---------- sync ----------
 
+  // Pages are saved to the DB as a sync fetches them, so re-render the list
+  // periodically to show progress while the sync runs. Only a "list" view in
+  // the current generation is updated — a search or "more like this" started
+  // mid-sync must not be clobbered every 800 ms.
+  const startSyncPoll = useCallback(() => {
+    const poll = setInterval(() => {
+      void (async () => {
+        if (viewRef.current !== "list") return;
+        const gen = generationRef.current;
+        const res = await api
+          .listItems({
+            provider: providerRef.current === ALL ? null : providerRef.current,
+            limit: Math.max(PAGE_SIZE, offsetRef.current),
+            offset: 0,
+          })
+          .catch(() => null);
+        if (!res || gen !== generationRef.current || viewRef.current !== "list") return;
+        offsetRef.current = res.items.length;
+        totalRef.current = res.total;
+        setItems(res.items);
+        setHasMore(res.items.length < res.total);
+        setStatus({
+          text: stoppingRef.current ? "Stopping…" : `Syncing… ${res.total} items in database so far`,
+        });
+      })();
+    }, 800);
+    return () => clearInterval(poll);
+  }, [api]);
+
+  // Post-sync: refresh whatever the user is looking at instead of
+  // unconditionally replacing it with the list (a query typed mid-sync used
+  // to keep its text but lose its results). "similar" is left untouched —
+  // its results don't change with new items and the user navigated there
+  // deliberately.
+  const refreshView = useCallback(async () => {
+    if (viewRef.current === "search" && queryRef.current.trim()) {
+      await runSearch(queryRef.current, searchModeRef.current);
+    } else if (viewRef.current === "list") {
+      await loadItems();
+    }
+  }, [loadItems, runSearch]);
+
   const doSync = useCallback(
     async () => {
       setSyncing(true);
       setStatus({ text: "Checking for new saved items…" });
-
-      // Pages are saved to the DB as the sync fetches them, so re-render the
-      // list periodically to show progress while the sync call is pending.
-      let running = true;
-      const poll = setInterval(() => {
-        void (async () => {
-          const res = await api
-            .listItems({
-              provider: providerRef.current === ALL ? null : providerRef.current,
-              limit: Math.max(PAGE_SIZE, offsetRef.current),
-              offset: 0,
-            })
-            .catch(() => null);
-          if (!running || !res) return;
-          offsetRef.current = res.items.length;
-          totalRef.current = res.total;
-          setItems(res.items);
-          setHasMore(res.items.length < res.total);
-          setStatus({ text: `Syncing… ${res.total} items in database so far` });
-        })();
-      }, 800);
+      const stopPoll = startSyncPoll();
 
       try {
+        // Scope is pinned here, at click time — a dropdown change mid-sync
+        // affects neither the running sync nor the completion message.
         const choice = providerRef.current;
+        const scopeLabel = choice === ALL ? "All services" : providerLabels.get(choice) || choice;
         const report =
           choice === ALL
             ? await api.syncAll({ full: false })
             : await api.sync({ provider: choice, full: false });
-        running = false;
-        await loadItems();
+        stopPoll();
+        await refreshView();
 
+        const reports = "reports" in report ? report.reports : [report];
+        // A user-requested stop is a neutral outcome, not an error — keep it
+        // out of the failure join and out of the error styling.
+        const wasStopped = reports.some((r) => r.status !== "ok" && r.stopped);
+        const error = reports
+          .filter((r): r is SyncReport & { status: "partial" | "failed" } => r.status !== "ok" && !r.stopped)
+          .map((r) => `${providerLabels.get(r.providerId) || r.providerId}: ${r.error}`)
+          .join(" · ");
         const captured = report.captured > 0 ? report.captured : undefined;
-        const error =
-          "reports" in report
-            ? report.reports
-                .filter((r): r is SyncReport & { status: "partial" | "failed" } => r.status !== "ok")
-                .map((r) => `${providerLabels.get(r.providerId) || r.providerId}: ${r.error}`)
-                .join(" · ")
-            : report.status !== "ok"
-              ? report.error
-              : "";
         // In capture mode nothing lands in the list — the raw archive grew instead.
         const outcome =
           captured !== undefined
             ? `Captured ${captured} raw pages (items unchanged — use “Ingest raw” to apply)`
-            : `${report.inserted} new · ${report.total} total · synced just now`;
-        setStatus(error ? { text: `${outcome}, then stopped: ${error}`, error: true } : { text: outcome });
+            : `${scopeLabel}: ${report.inserted} new · ${report.total} total · ${
+                wasStopped ? "stopped" : "synced just now"
+              }`;
+        setStatus(
+          error
+            ? { text: `${outcome}, then stopped: ${error}`, error: true }
+            : { text: outcome, similar: viewRef.current === "similar" }
+        );
       } catch (e) {
+        // Includes the single-flight rejection when another surface (page.html,
+        // an earlier popup instance) already has a sync running.
         setStatus({ text: errorText(e), error: true });
       } finally {
-        running = false;
-        clearInterval(poll);
+        stopPoll();
         setSyncing(false);
+        setStopping(false);
       }
     },
-    [api, loadItems, providerLabels]
+    [api, refreshView, startSyncPoll, providerLabels]
   );
+
+  // Cooperative stop: the running walk finishes its current page, keeps
+  // everything landed, and skips the watermark so the next sync re-covers the
+  // gap. The pending sync/syncAll call resolves with the stopped report.
+  const doStop = useCallback(async () => {
+    setStopping(true);
+    try {
+      await api.syncStop({});
+    } catch (e) {
+      setStopping(false);
+      setStatus({ text: errorText(e), error: true });
+    }
+  }, [api]);
+
+  // Reattach to a sync this surface didn't start (popup reopened mid-sync, or
+  // page.html open next to the popup): reflect the running state, show
+  // progress, and refresh when the background reports it finished.
+  const watchSync = useCallback(async () => {
+    setSyncing(true);
+    setStatus({ text: "Syncing…" });
+    const stopPoll = startSyncPoll();
+    try {
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 800));
+        const st = await api.syncStatus({}).catch(() => null);
+        if (!st?.running) break;
+        if (st.stopping) setStopping(true);
+      }
+    } finally {
+      stopPoll();
+      setSyncing(false);
+      setStopping(false);
+    }
+    await refreshView();
+  }, [api, refreshView, startSyncPoll]);
 
   // ---------- render ----------
 
@@ -422,11 +510,15 @@ export function App({ runtime }: { runtime: Runtime }) {
           </select>
           <button
             id="refresh"
-            title="Fetch items saved since the last sync"
-            disabled={syncing}
-            onClick={() => void doSync()}
+            title={
+              syncing
+                ? "Stop the sync — items already fetched are kept"
+                : "Fetch items saved since the last sync"
+            }
+            disabled={stopping}
+            onClick={() => void (syncing ? doStop() : doSync())}
           >
-            Sync
+            {stopping ? "Stopping…" : syncing ? "Stop" : "Sync"}
           </button>
           {runtime.openPage && (
             <button id="expand" title="Open as a full page" onClick={runtime.openPage}>

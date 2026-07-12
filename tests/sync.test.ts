@@ -261,6 +261,125 @@ test("no cap (maxItems 0) walks everything", async () => {
   db.close();
 });
 
+test("stop mid-walk keeps landed pages, skips the watermark, and the next sync heals the gap", async () => {
+  const db = await openDb();
+  const stop = { aborted: false };
+  const pages = [pageBody([4, 3], "c1"), pageBody([2, 1], null)];
+  let fetched = 0;
+  const provider: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      for (let i = 0; i < pages.length; i++) {
+        fetched++;
+        const res = await onPage("tester", { kind: "items", url: `/saved?p=${i}`, page: i, body: pages[i]! });
+        if (i === 0) stop.aborted = true; // the user clicks Stop after the first page landed
+        if (res.unseen === 0 || !res.hasNext) break;
+      }
+      return { account: "tester" };
+    },
+  };
+  const { sync, meta, synced } = harness(provider, db);
+
+  const res = await sync.syncProvider("substack", { stop });
+  assert.equal(res.status, "partial");
+  assert.ok(res.status === "partial");
+  assert.equal(res.stopped, true);
+  assert.equal(res.error, "Sync stopped");
+  assert.equal(res.inserted, 2); // first page kept
+  assert.equal(fetched, 2); // second page attempted, dropped at the onPage gate
+  assert.equal(meta.get("substack"), undefined); // watermark untouched
+  assert.deepEqual(synced, ["substack"]); // landed pages still get embeddings
+
+  // No watermark ⇒ the next incremental sync re-walks and backfills the gap.
+  const second = scriptedProvider([pageBody([4, 3], "c1"), pageBody([2, 1], null)]);
+  const h2 = harness(second.provider, db);
+  const res2 = await h2.sync.syncProvider("substack");
+  assert.equal(res2.status, "ok");
+  assert.equal(res2.inserted, 2); // items 2 and 1 recovered
+  assert.equal(res2.total, 4);
+  db.close();
+});
+
+test("stop before anything lands reports failed + stopped", async () => {
+  const db = await openDb();
+  const { provider, stats } = scriptedProvider([pageBody([1], null)]);
+  const { sync, meta, synced } = harness(provider, db);
+
+  const res = await sync.syncProvider("substack", { stop: { aborted: true } });
+  assert.equal(res.status, "failed");
+  assert.ok(res.status === "failed");
+  assert.equal(res.stopped, true);
+  assert.equal(res.inserted, 0);
+  assert.equal(stats.fetched, 1); // the page was fetched but never persisted
+  assert.equal(meta.get("substack"), undefined);
+  assert.deepEqual(synced, []);
+  db.close();
+});
+
+test("abort after the provider's normal return still skips the watermark", async () => {
+  const db = await openDb();
+  const stop = { aborted: false };
+  const provider: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      await onPage("tester", { kind: "items", url: "/saved?p=0", page: 0, body: pageBody([1], null) });
+      stop.aborted = true; // abort lands while the last page is finishing — no further onPage
+      return { account: "tester" };
+    },
+  };
+  const { sync, meta } = harness(provider, db);
+
+  const res = await sync.syncProvider("substack", { stop });
+  assert.equal(res.status, "partial");
+  assert.ok(res.status === "partial");
+  assert.equal(res.stopped, true);
+  assert.equal(res.inserted, 1); // the page landed and stays
+  assert.equal(meta.get("substack"), undefined); // an aborted run never counts as "last good sync"
+  db.close();
+});
+
+test("syncAllProviders stops between providers", async () => {
+  const db = await openDb();
+  const stop = { aborted: false };
+  const first: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      await onPage("tester", { kind: "items", url: "/saved?p=0", page: 0, body: pageBody([1], null) });
+      stop.aborted = true; // stop arrives while the first provider is finishing
+      return { account: "tester" };
+    },
+  };
+  let secondRan = false;
+  const second: Provider = {
+    id: "hackernews",
+    label: "Hacker News",
+    async fetchItems() {
+      secondRan = true;
+      return { account: "tester" };
+    },
+  };
+  const meta = new Map<ProviderId, ProviderMeta>();
+  const sync = createSync({
+    providers: { substack: first, hackernews: second },
+    db: asyncDbApi(db),
+    getMeta: async (id) => meta.get(id) ?? null,
+    setMeta: async (id, m) => void meta.set(id, m),
+  });
+
+  const res = await sync.syncAllProviders({ stop });
+  assert.equal(secondRan, false); // never reached
+  assert.equal(res.reports.length, 1); // finished reports stand
+  assert.equal(res.inserted, 1);
+  const ss = res.reports[0]!;
+  assert.equal(ss.status, "partial");
+  assert.ok(ss.status === "partial");
+  assert.equal(ss.stopped, true);
+  db.close();
+});
+
 test("syncAllProviders aggregates counts and carries per-provider reports", async () => {
   const db = await openDb();
   const ok = scriptedProvider([pageBody([1], null)]);

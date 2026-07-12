@@ -211,8 +211,8 @@ export interface SyncCounts {
 export type SyncReport = { providerId: ProviderId } & SyncCounts &
   (
     | { status: "ok"; syncedAt: number }
-    | { status: "partial"; error: string; needsLogin: boolean }
-    | { status: "failed"; error: string; needsLogin: boolean }
+    | { status: "partial"; error: string; needsLogin: boolean; stopped?: true }
+    | { status: "failed"; error: string; needsLogin: boolean; stopped?: true }
   );
 
 export interface AllSyncReport extends SyncCounts {
@@ -226,6 +226,10 @@ export interface SyncOptions {
   captureRaw?: boolean;
   /** Test mode: stop signalling after ~this many items (0 = unlimited). */
   maxItems?: number;
+  /** Cooperative stop token, checked at every page boundary. Structural on
+   *  purpose: a real AbortSignal satisfies it while core/ stays bare ES2022
+   *  (no DOM lib, so no AbortSignal type here). */
+  stop?: { readonly aborted: boolean };
 }
 
 /** Per-provider sync state persisted in prefs under `meta:<providerId>`. */
