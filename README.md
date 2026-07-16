@@ -1,218 +1,394 @@
 # Linkosh
 
-Linkosh is a Chrome extension that fetches your saved items from LinkedIn, Instagram,
-YouTube, Hacker News, X (Twitter), Facebook and Substack and lists them in
-the extension popup. Built to grow: more services can be added as additional
-providers later.
+Your saved posts are useful. Finding them again should be easy.
 
-## Install (developer mode)
+Linkosh is a local-first Chrome extension that brings your saved items from
+LinkedIn, Instagram, YouTube, Hacker News, X, Facebook, and Substack into one
+searchable library.
 
-1. `npm install && npm run build` (TypeScript compiles 1:1 into `dist/` —
-   no bundler; see CLAUDE.md for the toolchain).
-2. Open `chrome://extensions` in Chrome.
-3. Turn on **Developer mode** (top-right toggle).
-4. Click **Load unpacked** and select the **`dist/src`** folder.
-5. Make sure you are logged in to [linkedin.com](https://www.linkedin.com),
-   [instagram.com](https://www.instagram.com),
-   [youtube.com](https://www.youtube.com),
-   [news.ycombinator.com](https://news.ycombinator.com),
-   [x.com](https://x.com), [facebook.com](https://www.facebook.com) and/or
-   [substack.com](https://substack.com) in the same browser profile.
-6. Click the extension icon, pick the service in the dropdown, and press
-   **Sync**.
+Use it to:
+
+- browse saved items from several services in one place;
+- search by words, filters, or meaning;
+- find items similar to something you already saved;
+- keep an archive even after you unsave the original; and
+- export the complete library as a SQLite database.
+
+Linkosh is an early open-source project ([LGPL-licensed](#license)). It
+currently needs to be installed from source, and its service integrations may
+occasionally need maintenance as websites change their private APIs. If you
+are comfortable trying a developer build, feedback and bug reports are very
+welcome. Code contributions are not being accepted at the moment — see
+[Contributing](#contributing).
+
+## Privacy at a glance
+
+Linkosh is designed to work without a Linkosh account or server.
+
+- Your library is stored in your browser, in a local SQLite database.
+- Linkosh uses the sessions you already have open in Chrome. It does not ask
+  for or store your passwords.
+- Search embeddings are generated on your device by default. The model is
+  downloaded once (about 34 MB) and then cached.
+- Nothing is sent to an AI API unless you explicitly choose a cloud embedding
+  provider and add your own API key in Options.
+- Raw responses from supported services are not archived unless you turn on
+  the developer-only Capture mode.
+
+Linkosh does need permission to access the supported websites so it can read
+the same saved-item data their own pages use. See [Security and
+limitations](#security-and-limitations) before installing.
+
+## Supported services
+
+| Service | What Linkosh imports |
+| --- | --- |
+| LinkedIn | Saved posts |
+| Instagram | Saved posts and their collection names |
+| YouTube | Watch Later and your playlists (Liked videos are excluded) |
+| Hacker News | Upvoted stories and comments |
+| X (Twitter) | Bookmarks |
+| Facebook | Saved items and collection names |
+| Substack | Saved posts, podcasts, and notes |
+
+Linkosh keeps imported items as an archive. Removing an item on the original
+service does not delete the copy in Linkosh.
+
+## Install from source
+
+There is no Chrome Web Store release yet. For now, installation requires a
+local build.
+
+### What you need
+
+- Google Chrome
+- [Git](https://git-scm.com/downloads)
+- [Node.js 23.6 or newer](https://nodejs.org/)
+
+### Build and install
+
+1. Clone the repository and enter it:
+
+   ```sh
+   git clone https://github.com/sabyasachi/linkosh.git
+   cd linkosh
+   ```
+
+2. Install the development tools and build the extension:
+
+   ```sh
+   npm install
+   npm run build
+   ```
+
+3. Open `chrome://extensions` in Chrome.
+4. Turn on **Developer mode** in the top-right corner.
+5. Click **Load unpacked** and select the generated **`dist/src`** folder.
+6. Pin Linkosh from Chrome's Extensions menu if you want it to stay visible in
+   the toolbar.
+
+After pulling a newer version, run `npm install` and `npm run build` again,
+then click **Reload** on the Linkosh card in `chrome://extensions`.
+
+## Get started
+
+1. Sign in to at least one supported service in the same Chrome profile where
+   Linkosh is installed.
+2. Open Linkosh from the toolbar.
+3. Choose one service, or **All services**, and press **Sync**.
+4. Search or browse while the sync continues. Items are saved page by page, so
+   progress is not lost if a service stops responding partway through. The
+   Sync button becomes **Stop** while a sync runs; stopping keeps everything
+   fetched so far, and the next sync picks up the remainder.
+
+Click any result to open the original item. Use the expand button for a
+full-page library, or the settings button to configure services, search, and
+developer options. Options can also make the toolbar icon open the full-page
+library directly instead of the compact popup.
+
+### Search modes
+
+- **Text** is fast, precise keyword search.
+- **Hybrid** combines keyword and meaning-based results. It is a good default
+  when you remember the idea but not the exact wording.
+- **Semantic** ranks entirely by meaning.
+- The **≈** button on an item finds other saved items with similar content.
+
+Text search also supports filters and FTS5 operators:
+
+```text
+kind:short
+collection:"watch later" pasta
+poster_name:"jane doe"
+cats AND NOT dogs
+```
+
+The searchable fields are title, publication, summary, collection, kind, and
+poster name/handle. If an advanced query is invalid, Linkosh falls back to a
+plain substring search.
+
+### Choose services and check their status
+
+Open **Options → Services** to pick which services Linkosh syncs — not
+everyone uses all seven. A disabled service disappears from the popup's
+dropdown and is skipped by **All services** sync; items already saved from it
+stay in your library.
+
+The **Service status** page (linked from that section) shows, per service,
+whether a session cookie is present (so a sync would get past the login
+check), how many items are saved, the newest item's save date, and when the
+last successful sync ran.
+
+### Refresh, full sync, and export
+
+Normal syncs are incremental. Most services list the newest items first, so
+Linkosh stops after reaching a page it has already stored. A typical refresh
+therefore takes only one or two requests.
+
+Open **Options → Developer** to:
+
+- run a **Full sync**, which revisits everything and refreshes stale titles,
+  snippets, and thumbnails;
+- **Export database** as a portable `.sqlite` file;
+- use **Capture mode** when developing a parser;
+- use **Test mode**, which stops each sync after about 100 items — handy for
+  checking that a provider works without a heavy fetch; or
+- **Delete all saved items**, which empties the library and resets each
+  service's sync state so the next sync starts from scratch.
+
+YouTube playlists other than Watch Later are fully walked on every sync
+because users can reorder them manually.
+
+## Security and limitations
+
+Please treat Linkosh as experimental software.
+
+- Supported sites do not provide stable public APIs for all of this data.
+  Linkosh uses the same private endpoints as their web apps, and an integration
+  can break when a site changes its API, response shape, or anti-bot rules.
+- Syncing makes requests as your signed-in browser session. Linkosh spaces out
+  requests and caps pagination, but unusually heavy use could still trigger a
+  temporary rate limit. If that happens, wait a few minutes before retrying.
+- Some services expose the content's publish time but not the time you saved
+  it. Linkosh sorts by save time when available, then publish time, then local
+  import time.
+- Instagram thumbnail URLs expire. A Full sync can refresh them; the original
+  post links continue to work.
+- YouTube identifies Shorts from playlist metadata. Older Shorts without the
+  expected badge or URL may appear as regular videos.
+- Cloud embedding API keys are stored by Chrome in `chrome.storage.local` and
+  are plaintext on the local disk. Use a restricted, revocable key.
+- During the local model's first download, or while embeddings are being
+  rebuilt, semantic search quietly falls back to text search. Options shows
+  the remaining backlog.
+
+If a sync says your session expired, open the service, sign in again, and
+retry. If the failure continues, please [open an
+issue](https://github.com/sabyasachi/linkosh/issues) with the service name and
+the visible error. Do not include cookies, tokens, private saved content, or
+raw captured responses.
 
 ## How it works
 
-- The extension calls each service's internal web API — the same API its own
-  website uses — reusing your existing browser session. No credentials are
-  stored; only CSRF tokens are read from cookies.
-  - **LinkedIn**: the **Voyager API** behind the *My items → Saved posts*
-    page (CSRF token from the `JSESSIONID` cookie).
-  - **Instagram**: the `feed/saved/posts` API behind the *Saved → All posts*
-    page (CSRF token from the `csrftoken` cookie). Instagram rejects these
-    calls when they come from the extension itself (HTTP 572 bot detection),
-    so they are executed inside an instagram.com tab via `chrome.scripting` —
-    an existing tab if one is open, otherwise a background tab that is closed
-    when the sync finishes. The sync walks the all-posts saved feed; each
-    item's `saved_collection_ids` is resolved to collection names via one
-    `collections/list` call (a post in several collections keeps one row
-    with those names stored as a JSON array), and `published_at` holds the
-    post's publish time (`taken_at`) — save time isn't exposed.
-  - **YouTube**: the **InnerTube API** (`youtubei/v1/browse`) behind the
-    website. YouTube has no single "saved" feed — saving a video or Short
-    files it into a playlist (Watch Later by default) — so a sync enumerates
-    your playlists plus Watch Later and walks each one, merging multiple
-    playlist names into one video row. Playlist pages expose only relative
-    publish age text, so `published_at` is an approximate publish date derived
-    from that age and the page fetch time. Requests need auth material only a
-    youtube.com page has (`SAPISIDHASH`, `ytcfg`), so like Instagram they run
-    inside a youtube.com tab. Liked videos are not treated as saved.
-  - **X (Twitter)**: the **GraphQL `Bookmarks` endpoint** behind
-    x.com/i/bookmarks (CSRF token from the `ct0` cookie, plus the public
-    bearer token baked into X's web app). Like Instagram, requests run inside
-    an x.com tab via `chrome.scripting`. X's GraphQL requires a map of client
-    feature flags that drifts with web-app deployments; the provider ships a
-    baseline and self-repairs by parsing the server's "features cannot be
-    null"/"unknown features" errors and retrying. `published_at` holds the
-    post's publish time — bookmark time isn't exposed. `kind` is
-    `tweet`/`photo`/`video`/`gif`.
-  - **Facebook**: the **Comet GraphQL API** behind facebook.com/saved
-    (request token `fb_dtsg` scraped from the page, user id from the `c_user`
-    cookie). The first page of items is server-rendered into the document as
-    embedded Relay JSON — but only for real navigations, so the provider
-    works in a tab actually showing `/saved/` (an existing one if open, else
-    a background tab) and reads the data out of its DOM. Later pages use
-    Facebook's *persisted queries*, where requests send only a numeric
-    `doc_id` that rotates with web-app deployments — the provider discovers
-    the current id for `CometSaveDashboardAllItemsPaginationQuery` by
-    scanning the page's own JS bundles for its `_facebookRelayOperation`
-    module and caches it until it stops working. Save time isn't exposed
-    (`bookmarked_at` is NULL) and the account is the numeric user id. `kind` is
-    `post`/`video`/`photo`/…; `collection` holds the user's collection
-    names.
-  - **Substack**: the **reader API** behind substack.com/saved
-    (`/api/v1/reader/saved?filter=all`, cursor-paginated). Plain
-    session-cookie auth, so requests go straight from the extension like
-    LinkedIn and Hacker News. Saved items cover both posts and Substack
-    notes; `kind` is the post type (`newsletter`/`podcast`/…) or `note`.
-    `bookmarked_at` uses the item's save time when the API exposes it;
-    `published_at` holds the post/comment publish date.
-  - **Hacker News**: upvoted items are not exposed by HN's official
-    (Firebase) API — they only appear on the private `/upvoted` page — so the
-    provider fetches that page (and its `&comments=t` twin for upvoted
-    comments) with your session cookie and scrapes the HTML. Parsing is
-    regex-based (MV3 service workers have no `DOMParser`); HN's markup has
-    been stable for many years. `kind` is `story` or `comment`.
-- Items are stored in a real **SQLite database** (SQLite compiled to WASM,
-  vendored in [src/vendor/](src/vendor/)) whose file lives in the browser's Origin
-  Private File System — it persists across browser restarts. Schema: one
-  `saved_items` table (`provider`, `account`, `external_id`, `url`, `title`,
-  `publication`, `summary`, `image`, `bookmarked_at`, `published_at`,
-  `created_at`, plus `kind` — e.g. `short`/`video`/`reel` — `duration` in
-  seconds, `collection` as JSON array text, `poster_name`/`poster_handle` for
-  the author of the saved content, and `stats` as JSON)
-  and an **FTS5** full-text index that powers the popup's search box. A
-  second table, `raw_data`, archives raw API responses — but only while the
-  developer-only capture mode is on (see Development below).
-- The search box accepts **FTS5 query syntax**: plain words are matched with
-  the last word as a prefix, but queries containing operators are passed
-  through raw, so `kind:short`, `collection:"watch later" pasta`,
-  `poster_name:"jane doe"`, `poster_handle:jane`, `cats AND NOT dogs` all work
-  (`title`, `publication`, `summary`, `collection`, `kind`, `poster_name` and
-  `poster_handle` are the indexed columns). A
-  query that fails to parse falls back to a plain substring scan.
-- Search also understands **meaning**, not just keywords: every item gets a
-  vector embedding computed **on-device** (quantized `bge-small-en-v1.5` via
-  [transformers.js](https://github.com/huggingface/transformers.js), running
-  in a dedicated worker — the model downloads once from huggingface.co
-  (~34 MB) and is cached for offline use). The selector next to the search
-  box picks the mode: **Text** (default; exactly the FTS5 behavior above),
-  **Hybrid** (text and semantic rankings fused) or **Semantic** (pure
-  similarity). Queries using FTS5 operators always run as text search. Each
-  row's **≈** button lists the most similar saved items ("more like this").
-  The extension's options page can switch embeddings to a cloud API (OpenAI /
-  Gemini / Voyage) via an API key for higher quality; by default nothing
-  leaves the machine.
-- Syncs are **incremental**: the services list saved items newest-first,
-  so syncing stops as soon as it reaches a page it has already stored — a
-  typical refresh is 1–2 requests. (Exception: YouTube playlists other than
-  Watch Later can be manually reordered, so they are re-walked fully each
-  sync — still cheap at ~100 videos per request.) **Options → Developer → Full
-  sync** re-walks everything (use occasionally to refresh stale
-  titles/snippets/thumbnails). Items you
-  unsave on the service are kept in the DB — it's an archive, not a mirror.
-- Syncs are saved **page by page**: each fetched page is written to the DB
-  before the next request, the popup live-updates while a sync runs, and if
-  a sync fails partway (rate limit, dropped session) everything fetched so
-  far is kept — the next sync resumes from the top and stops at known
-  items as usual.
-- Because MV3 service workers can't spawn workers or use the synchronous
-  OPFS handles SQLite needs, the DB runs in a dedicated worker
-  ([src/workers/db.worker.ts](src/workers/db.worker.ts)) hosted by an
-  offscreen document ([src/pages/offscreen.ts](src/pages/offscreen.ts)); the
-  background worker talks to it over a typed RPC protocol
-  ([src/core/rpc/](src/core/rpc/)).
-- Clicking an item opens it on the original service in a new tab.
+This section is for software engineers and the curious. Linkosh is
+deliberately small—there is no backend service and no runtime npm dependency
+graph—but fitting SQLite, authenticated web fetching, and local ML into a
+Manifest V3 extension creates some interesting constraints.
 
-## Caveats
+### One core, several browser containers
 
-- All of these APIs are **unofficial and undocumented**. LinkedIn rotates its GraphQL
-  `queryId` versions occasionally; the provider tries the known ones in
-  [src/ext/providers/linkedin.ts](src/ext/providers/linkedin.ts) but may eventually need
-  updating. To find the current id, open the saved-posts page, scroll, and
-  look for the `voyagerSearchDashClusters` request in DevTools → Network.
-  If the Instagram endpoint drifts, watch for `feed/saved` requests on the
-  saved-posts page instead; for YouTube, watch for `youtubei/v1/browse`
-  requests on the playlists page; for X, watch for `graphql/<queryId>/Bookmarks`
-  requests on the bookmarks page (queryIds live in
-  [src/ext/providers/twitter.ts](src/ext/providers/twitter.ts)). Facebook's pagination
-  `doc_id` is discovered automatically; if that breaks, look for
-  `CometSaveDashboardAllItemsPaginationQuery` requests to `/api/graphql/` on
-  the saved page and update the query name in
-  [src/ext/providers/facebook.ts](src/ext/providers/facebook.ts). If Substack drifts, watch
-  for `reader/saved` requests on substack.com/saved.
-- `bookmarked_at` is the actual save/bookmark time when a provider exposes
-  it; `published_at` is the content publish time or a provider-specific
-  estimate. The list sorts by `bookmarked_at`, then `published_at`, then local
-  `created_at`.
-- YouTube Shorts are detected from the thumbnail's `SHORTS` badge (or a
-  `/shorts/` link) in the playlist data; a Short saved before YouTube added
-  that badge may be classified as a plain video.
-- Instagram thumbnail URLs are **signed CDN links that expire** after a
-  while, so thumbnails of old items may stop loading. Run **Options →
-  Developer → Full sync** to refresh them (the post links themselves never
-  expire).
-- Cloud embedding API keys entered on the options page are stored in
-  `chrome.storage.local`, which is **plaintext on the local disk** —
-  acceptable for a personal machine, but don't use a key you can't revoke.
-  Semantic search silently falls back to text search until the local model's
-  first download finishes (needs network once) or while a provider switch is
-  re-embedding the corpus; the options page shows the backlog.
-- Heavy refreshing could in theory trip rate limits; the extension waits
-  400 ms (LinkedIn, YouTube, Substack) / 500 ms (Hacker News, X) / 600 ms
-  (Instagram) / 700 ms (Facebook) between pages and caps at 100 pages per
-  sync (per playlist for YouTube). If a service returns HTTP 429, wait a few
-  minutes and try again.
+Chrome's Manifest V3 service worker cannot create dedicated workers, and the
+synchronous Origin Private File System handles used by SQLite are available
+only inside a dedicated worker. Linkosh crosses that gap with an offscreen
+document:
 
-## Development & testing
+```mermaid
+flowchart LR
+    UI["Popup / full-page Preact UI"]
+    BG["MV3 background service worker"]
+    OFF["Offscreen document"]
+    DB["Dedicated SQLite worker"]
+    AI["Dedicated embedding worker"]
 
-- `npm test` typechecks every project (`tsc -b`) and runs the Node test
-  suite — `node --test` executes the `.ts` sources directly (Node ≥ 23.6
-  type stripping) against the same vendored SQLite WASM build and the same
-  parse/ingest/sync/RPC modules the extension runs. Provider pagination and
-  self-repair are covered against a scripted fake environment; only live
-  fetching and the chrome plumbing itself need a real browser.
-- `npm run ux` serves the real popup UI (built assets + the extension's own
-  background service over HTTP) from a fixture-seeded database at
-  `http://127.0.0.1:5173/` — handy for UI work without loading the extension.
-- **Capture mode** (Options → Developer) changes what a sync does: instead
-  of writing items, every raw response page is archived verbatim into the
-  `raw_data` table and the item list is left untouched. Options → Developer
-  provides **Ingest raw** (replay the archive through the parsing pipeline
-  into `saved_items`) and **Clear raw** (drop the archive). This is
-  how you iterate on the parsing/embedding pipeline without re-fetching from
-  the services: capture once, **Export database** from Options → Developer,
-  then re-run the pipeline on the copy offline with
-  `node src/node/tools/ingest.ts linkosh.sqlite [--reingest]`.
-  `node src/node/tools/capture-fixtures.ts <db.sqlite>` turns captured pages
-  into parser regression fixtures (review and scrub before committing —
-  bodies are verbatim).
+    UI -->|"chrome.runtime · typed RPC"| BG
+    BG -->|"chrome.runtime · typed RPC"| OFF
+    OFF -->|"postMessage"| DB
+    OFF -->|"postMessage"| AI
+    DB -->|"SQLite WASM + OPFS"| FILE[("linkosh-v1.sqlite")]
+```
 
-## Adding a new service
+Every hop uses the same typed RPC protocol and the same success/error envelope.
+Vectors remain `Float32Array`s on the structured-clone worker hop; they never
+cross `chrome.runtime`, whose JSON serialization would corrupt typed arrays.
 
-1. Create `src/core/parse/<service>.ts` — a pure parser exporting
-   `parsePage({ kind, body, context })` → `{ items, cursor, hasNext }` —
-   and register it in [src/core/parse/index.ts](src/core/parse/index.ts)
-   (plus the new id in `ProviderId`, [src/core/types.ts](src/core/types.ts)).
-2. Create `src/ext/providers/<service>.ts` exporting
-   `createProvider(env: ProviderEnv)` — fetching/auth/pagination only; it
-   hands raw pages to `onPage` and gets the parse result back (contract in
-   [src/core/types.ts](src/core/types.ts), env port in
-   [src/ext/providers/env.ts](src/ext/providers/env.ts)).
-3. Register it in the `PROVIDERS` wiring in
-   [src/ext/background.ts](src/ext/background.ts).
-4. Add the service's origin to `host_permissions` in
-   [src/manifest.json](src/manifest.json).
-5. Add fixture pages + a parser test under [tests/](tests/).
+The domain layer under `src/core/` knows nothing about Chrome, the DOM, or
+Node. Parsing, ingestion, sync decisions, SQL repositories, search ranking,
+and embedding orchestration all live there. Thin adapters run that core in
+the extension and under Node, which lets the test suite exercise the shipped
+SQLite WASM build rather than a mock database.
 
-The popup picks up new providers automatically via its service dropdown.
+### Fetch first, parse once
+
+Providers are intentionally split in two:
+
+1. A browser-facing provider handles authentication, requests, pagination,
+   throttling, and recovery from API drift.
+2. A pure parser turns a captured response plus its context into normalized
+   items.
+
+Instead of returning an entire fetched collection, a provider passes each raw
+page to the sync layer's `onPage` callback. The sync layer parses and persists
+that page immediately, then returns `{ items, unseen, cursor, hasNext }` so the
+provider can decide whether to continue. This inversion gives Linkosh three
+useful properties:
+
+- partial syncs retain every page that landed successfully;
+- live fetching and offline replay use exactly the same parser and ingestion
+  path; and
+- providers never need database access.
+
+LinkedIn, Hacker News, and Substack can fetch from the background worker using
+the browser's existing session. Instagram, YouTube, X, and Facebook require
+same-origin page state or browser-generated headers, so Linkosh executes a
+self-contained function inside a temporary or existing site tab. Those
+injected functions have no imports or module-scope references because Chrome
+serializes and reparses them in the page.
+
+Several integrations include small self-repair mechanisms. LinkedIn and X try
+known GraphQL query IDs newest-first; X adjusts its feature map from structured
+server errors; Facebook discovers its current persisted-query `doc_id` by
+scanning the site's own JavaScript bundles. These mechanisms reduce routine
+breakage, but they cannot make private APIs stable.
+
+### Incremental sync without losing a partial backfill
+
+At the start of a normal sync, the core takes the IDs from the last *successful*
+sync as its known set. A provider walks newest-first pages until one contains
+no unseen items. A partial run deliberately does not advance that successful
+watermark: otherwise the next run could stop on the pages just written and
+leave a gap below them.
+
+Writes are idempotent upserts, and the database is an archive rather than a
+mirror. Changed searchable text automatically requeues that row for
+embedding. For a detailed treatment of stop rules and partial backfills, see
+[docs/sync-and-refresh.md](docs/sync-and-refresh.md).
+
+### SQLite search plus on-device embeddings
+
+The database is SQLite compiled to WebAssembly and stored as a real file in
+the extension origin's OPFS. `saved_items` has an external-content FTS5 index
+maintained by triggers. SQL rows are converted to the camel-cased domain model
+at the repository boundary; embedding blobs are excluded from anything that
+might travel over Chrome's JSON transport.
+
+Text search uses a single FTS query builder shared by every runtime. Hybrid
+search combines FTS5 rank with cosine similarity through reciprocal-rank
+fusion. Semantic search and “more like this” use a quantized
+`bge-small-en-v1.5` model through Transformers.js in a separate worker, so an
+ONNX Runtime failure cannot take down SQLite. OpenAI, Gemini, and Voyage are
+optional embedding adapters; local inference remains the default.
+
+### A build with no bundler
+
+TypeScript is the build tool. Several `tsconfig` projects enforce runtime
+boundaries by exposing only the libraries and types valid in each container:
+the pure core cannot import DOM, Chrome, or Node APIs; injected code gets the
+DOM but no imports; workers get Web Worker types; and extension code gets the
+Chrome API.
+
+Source imports use `.ts` extensions. TypeScript rewrites them to `.js` while
+emitting files one-for-one into `dist/`, making `dist/src` the unpacked
+extension root. Node 23.6+ can run the same source files directly using native
+type stripping. The result is one set of core modules for the browser, tests,
+and database tools, without a bundler-specific runtime.
+
+More design notes live in [docs/](docs/), including the
+[TypeScript architecture](docs/typescript-rewrite.md).
+
+## Development
+
+Install dependencies once, then use:
+
+```sh
+npm run typecheck  # fast incremental compile check
+npm test           # typecheck all projects and run the Node test suite
+npm run build      # clean, compile, copy assets, and run post-emit guards
+npm run ux         # serve the real UI at http://127.0.0.1:5173/
+```
+
+Tests run the TypeScript sources directly and use the same vendored SQLite
+WASM build as the extension. Provider tests use a scripted browser environment
+to cover pagination and self-repair. Authentication, page injection, OPFS,
+service-worker suspension, and model loading still require a live-extension
+smoke test.
+
+### Work on parsers without repeatedly fetching
+
+Repeatedly hitting a service is slow and can trigger rate limits. Linkosh has
+a replayable pipeline for parser work:
+
+1. Turn on **Options → Developer → Capture mode**.
+2. Sync once. Raw response pages go to `raw_data`; `saved_items` is untouched.
+3. Export the database.
+4. Replay the parser and upsert pipeline against a copy:
+
+   ```sh
+   node src/node/tools/ingest.ts linkosh.sqlite --reingest
+   ```
+
+5. Optionally create regression-fixture candidates:
+
+   ```sh
+   node src/node/tools/capture-fixtures.ts linkosh.sqlite
+   ```
+
+Captured bodies are verbatim and may contain private data. Review and scrub
+them before committing anything.
+
+## Adding a service
+
+The short version:
+
+1. Add a pure parser under `src/core/parse/` and register its provider ID.
+2. Add a fetch-only provider under `src/ext/providers/`.
+3. Wire it into `src/ext/background.ts`.
+4. Add the service origin to `src/manifest.json`.
+5. Add small, scrubbed fixtures and extend the parser/provider tests.
+
+The UI reads the provider registry, so a correctly registered service appears
+in the dropdown and on the Services/status pages automatically. If you are
+extending a fork, follow the contracts documented in [AGENTS.md](AGENTS.md),
+especially the no-import rule for injected functions.
+
+## Contributing
+
+**Code contributions (pull requests) are not being accepted at the moment** to
+keep the review load manageable while the project stabilizes. The
+[LGPL license](#license) still lets you fork and modify Linkosh freely in the
+meantime.
+
+What is welcome today:
+
+- [Bug reports](https://github.com/sabyasachi/linkosh/issues), especially for
+  a broken provider — include the service name and the visible error.
+- For parser breakage, a minimal scrubbed fixture is much more useful than a
+  large raw capture.
+- Never share session cookies, API keys, personal database exports, or
+  unsanitized captured responses in an issue.
+
+## License
+
+Linkosh is free software, licensed under the
+[GNU Lesser General Public License v3.0 or later](LICENSE)
+(LGPL-3.0-or-later). The LGPL is a set of additional permissions on top of the
+[GNU GPL v3](COPYING), so both texts ship in the repository.
+
+In practice: you may use, study, modify, and redistribute Linkosh, including
+in forks, as long as the Linkosh code itself (and modifications to it) remains
+under the LGPL with source available. The LGPL's linking permissions
+additionally allow Linkosh's modules to be used as a library from software
+under other licenses.
+
+The vendored third-party builds under `src/vendor/` keep their own upstream
+licenses (SQLite is public domain; Preact and ONNX Runtime are MIT;
+Transformers.js is Apache-2.0) — all LGPL-compatible.

@@ -2,6 +2,7 @@
   "name": "linkosh",
   "private": true,
   "version": "0.0.0",
+  "license": "LGPL-3.0-or-later",
   "description": "Toolchain for the Linkosh extension: tsc compiles src/ 1:1 into dist/ (the unpacked-extension dir); tests and tools run the same .ts sources directly under Node via native type stripping. Zero runtime dependencies by design — vendor/ carries the only third-party code.",
   "type": "module",
   "engines": {
