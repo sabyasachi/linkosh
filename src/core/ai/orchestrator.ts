@@ -12,19 +12,42 @@ import type {
   SearchMode,
   SearchResult,
 } from "../types.ts";
-import type { AiApi } from "./api.ts";
+import type { AiApi, EmbedKind } from "./api.ts";
 import { FTS_OPERATORS } from "../fts.ts";
+
+/** Version of the rowText recipe below, appended to every embedding provider
+ *  id (src/workers/embedders.ts). Stored embeddings are keyed by provider id
+ *  (`embedding_model`), so bumping this makes every row pending and the
+ *  backlog drain re-embeds the corpus — the only way a code-side change to
+ *  rowText can reach already-embedded rows. Bump it whenever rowText's output
+ *  changes for existing data. r2: collection labels included (2026-07-16). */
+export const ROWTEXT_VERSION = "r2";
+
+// Provider-default collection labels with no topical meaning — the user never
+// chose them as a subject, so embedding them would only add noise. Compared
+// case-insensitively.
+const COLLECTION_STOPLIST = new Set(["upvoted", "watch later", "posts", "saved", "all bookmarks"]);
 
 // Row text fed to the embedding model; truncated so one pathological summary
 // can't blow up inference time. Poster is deliberately excluded — it would
-// cluster embeddings by author. Exported for tests.
+// cluster embeddings by author. Topical collection labels are *included*:
+// they are the user's own subject labeling and often the only topical text a
+// thin row (emoji-caption quote image) will ever have — measured to lift
+// median rank of labeled items from 205→49 ("movie") and 1151→82
+// ("philosophy"), see docs/plans/embedding-collections-eval.md. Exported for
+// tests.
 export function rowText({
   title,
   publication,
   summary,
   url,
-}: Pick<PendingEmbeddingRow, "title" | "publication" | "summary"> & { url?: string | null }): string {
-  const content = [title, publication, summary].filter(Boolean).join("\n").trim();
+  collection,
+}: Pick<PendingEmbeddingRow, "title" | "publication" | "summary"> & {
+  url?: string | null;
+  collection?: string[] | null;
+}): string {
+  const labels = (collection ?? []).filter((c) => !COLLECTION_STOPLIST.has(c.trim().toLowerCase()));
+  const content = [title, publication, summary, labels.join(", ")].filter(Boolean).join("\n").trim();
   // Cloud embedding APIs reject empty strings. A URL still carries useful
   // semantic signal through its host/path; the final label handles malformed
   // or synthetic rows whose URL is empty too, without wedging the whole batch.
@@ -59,7 +82,7 @@ export interface OrchestratorDb {
 export interface OrchestratorEmbedder {
   configure(args: { settings: AiSettings | null }): Promise<{ model: string }>;
   status(args: Record<string, never>): Promise<EmbedderStatus>;
-  embed(args: { texts: string[] }): Promise<Float32Array[]>;
+  embed(args: { texts: string[]; kind?: EmbedKind }): Promise<Float32Array[]>;
 }
 
 export interface CreateOrchestratorOptions {
@@ -102,7 +125,7 @@ export function createOrchestrator({ db, ai, getSettings }: CreateOrchestratorOp
         if (!pending.length) break;
         for (let i = 0; i < pending.length; i += 16) {
           const batch = pending.slice(i, i + 16);
-          const vectors = await ai.embed({ texts: batch.map(rowText) });
+          const vectors = await ai.embed({ texts: batch.map(rowText), kind: "document" });
           await db.storeEmbeddings({
             model,
             rows: batch.map((row, j) => ({ id: row.id, vector: vectors[j]! })),
@@ -182,7 +205,7 @@ export function createOrchestrator({ db, ai, getSettings }: CreateOrchestratorOp
       return fts();
     }
 
-    const [queryVector] = await ai.embed({ texts: [query] });
+    const [queryVector] = await ai.embed({ texts: [query], kind: "query" });
     const args = { query, queryVector: queryVector!, model: aiStatus.model, provider: provider ?? null, limit };
     const items = mode === "semantic" ? await db.semanticSearch(args) : await db.hybridSearch(args);
     return { items, mode, requested };

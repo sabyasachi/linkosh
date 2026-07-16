@@ -15,6 +15,7 @@ export interface PendingEmbeddingRow {
   title: string | null;
   publication: string | null;
   summary: string | null;
+  collection: string[];
 }
 
 /** Rows still needing an embedding for the current model. `IS NOT` (not `!=`)
@@ -24,12 +25,14 @@ export function pendingEmbeddings(
   db: SqlDatabase,
   { model, limit = 64 }: { model: string; limit?: number }
 ): PendingEmbeddingRow[] {
-  return db.rows<PendingEmbeddingRow>(
-    `SELECT id, url, title, publication, summary FROM saved_items
-     WHERE embedding IS NULL OR embedding_model IS NOT ?
-     ORDER BY id DESC LIMIT ?`,
-    [model, limit]
-  );
+  return db
+    .rows<Omit<PendingEmbeddingRow, "collection"> & { collection: string }>(
+      `SELECT id, url, title, publication, summary, collection FROM saved_items
+       WHERE embedding IS NULL OR embedding_model IS NOT ?
+       ORDER BY id DESC LIMIT ?`,
+      [model, limit]
+    )
+    .map((row) => ({ ...row, collection: JSON.parse(row.collection) as string[] }));
 }
 
 export function storeEmbeddings(

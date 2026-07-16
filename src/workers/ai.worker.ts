@@ -58,10 +58,10 @@ const handlers: Handlers<EmbedderApi> = {
     };
   },
 
-  async embed({ texts }) {
+  async embed({ texts, kind }) {
     try {
       await ensureInit();
-      const vectors = await provider.embed(texts);
+      const vectors = await provider.embed(texts, kind ?? "document");
       initError = null;
       return vectors;
     } catch (e: unknown) {

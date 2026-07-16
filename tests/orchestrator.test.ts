@@ -140,6 +140,13 @@ test("hybrid and semantic search end-to-end over the fake embedding space", asyn
   assert.ok(semantic.items.length >= 1);
   assert.equal(semantic.items[0]!.title, "coffee brewing guide");
   assert.ok(semantic.items[0]!.similarity! > 0.9); // near-identical token bag
+
+  // Retrieval-trained models (bge) need to know queries from documents: the
+  // backlog embeds rows as "document", search embeds the query as "query".
+  const kinds = fake.calls.filter((c) => c.op === "embed").map((c) => c.kind);
+  assert.ok(kinds.length >= 3);
+  assert.deepEqual(kinds.slice(0, -2), Array(kinds.length - 2).fill("document"));
+  assert.deepEqual(kinds.slice(-2), ["query", "query"]);
   db.close();
 });
 
@@ -194,4 +201,26 @@ test("rowText joins content, falls back for empty rows, and truncates at 1000 ch
   );
   assert.equal(rowText({ title: " ", publication: null, summary: null, url: "" }), "Saved item");
   assert.equal(rowText({ title: "x".repeat(2000), publication: null, summary: null }).length, 1000);
+});
+
+test("rowText appends topical collection labels, dropping provider-default ones", () => {
+  assert.equal(
+    rowText({ title: "t", publication: null, summary: null, collection: ["movie", "Watch Later"] }),
+    "t\nmovie"
+  );
+  // stoplist match is case-insensitive and whitespace-tolerant
+  assert.equal(
+    rowText({ title: "t", publication: null, summary: null, collection: [" UPVOTED "] }),
+    "t"
+  );
+  // a stoplisted-only collection on an empty row still falls through to the URL
+  assert.equal(
+    rowText({ title: "", publication: null, summary: null, url: "https://x.test/p", collection: ["posts"] }),
+    "https://x.test/p"
+  );
+  // labels alone are enough to make a thin row embeddable
+  assert.equal(
+    rowText({ title: "", publication: null, summary: null, url: "", collection: ["Philosophy", "books"] }),
+    "Philosophy, books"
+  );
 });

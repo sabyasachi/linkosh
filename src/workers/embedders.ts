@@ -8,12 +8,16 @@
 // file.
 import { pipeline, env, type FeatureExtractionPipeline } from "../vendor/transformers.min.js";
 import type { AiSettings, DownloadProgress } from "../core/types.ts";
+import type { EmbedKind } from "../core/ai/api.ts";
+import { ROWTEXT_VERSION } from "../core/ai/orchestrator.ts";
 
 export interface EmbeddingProvider {
   id: string;
   dim: number;
   init(onProgress?: (p: DownloadProgress) => void): Promise<void>;
-  embed(texts: string[]): Promise<Float32Array[]>;
+  /** `kind` matters only to retrieval-trained models (bge prefixes queries);
+   *  symmetric/cloud providers ignore it. */
+  embed(texts: string[], kind?: EmbedKind): Promise<Float32Array[]>;
 }
 
 // transformers.js setup for MV3: the ORT wasm runtime must load from the
@@ -43,7 +47,7 @@ async function loadLocalPipeline(
     originalWarn.apply(console, args);
   };
   try {
-    return await pipeline("feature-extraction", "Xenova/all-MiniLM-L6-v2", {
+    return await pipeline("feature-extraction", "Xenova/bge-small-en-v1.5", {
       dtype: "q8",
       device: "wasm",
       progress_callback: (p) => {
@@ -57,18 +61,29 @@ async function loadLocalPipeline(
   }
 }
 
+/** bge's retrieval training expects search queries wrapped in this exact
+ *  instruction (documents stay bare); skipping it forfeits most of the model's
+ *  keyword→document advantage (per the BAAI model card, verified in the
+ *  2026-07-16 offline eval). */
+const BGE_QUERY_PREFIX = "Represent this sentence for searching relevant passages: ";
+
 export function createLocalProvider(): EmbeddingProvider {
   let extractor: FeatureExtractionPipeline | null = null;
   return {
-    id: "local:minilm-l6-v2-q8",
+    // The +rN suffix is the rowText recipe version, not a model change — see
+    // ROWTEXT_VERSION. Same for the cloud providers below.
+    id: `local:bge-small-en-v1.5-q8+${ROWTEXT_VERSION}`,
     dim: 384,
     async init(onProgress) {
       // Extension pages are not cross-origin isolated → no SharedArrayBuffer
-      // → single-threaded WASM. q8 MiniLM runs ~5–20 ms per short row text.
+      // → single-threaded WASM. q8 bge-small runs ~5–20 ms per short row text.
       extractor ??= await loadLocalPipeline(onProgress);
     },
-    async embed(texts) {
-      const output = await extractor!(texts, { pooling: "mean", normalize: true });
+    async embed(texts, kind) {
+      const input = kind === "query" ? texts.map((t) => BGE_QUERY_PREFIX + t) : texts;
+      // bge models pool from the CLS token — "mean" would silently degrade
+      // the vectors while still looking plausible.
+      const output = await extractor!(input, { pooling: "cls", normalize: true });
       // output is a Tensor of shape [texts.length, 384]; slice it into rows.
       const { data, dims } = output;
       const [n, dim] = dims as [number, number];
@@ -121,7 +136,7 @@ async function inBatches(
 export function createOpenAIProvider({ apiKey }: { apiKey: string }): EmbeddingProvider {
   const model = "text-embedding-3-small"; // cheapest mainstream, strong quality
   return {
-    id: `openai:${model}`,
+    id: `openai:${model}+${ROWTEXT_VERSION}`,
     dim: 1536,
     async init() {},
     embed: (texts) =>
@@ -140,7 +155,7 @@ export function createGeminiProvider({ apiKey }: { apiKey: string }): EmbeddingP
   const model = "gemini-embedding-001";
   const dim = 768;
   return {
-    id: `gemini:${model}-${dim}`,
+    id: `gemini:${model}-${dim}+${ROWTEXT_VERSION}`,
     dim,
     async init() {},
     embed: (texts) =>
@@ -164,7 +179,7 @@ export function createGeminiProvider({ apiKey }: { apiKey: string }): EmbeddingP
 export function createVoyageProvider({ apiKey }: { apiKey: string }): EmbeddingProvider {
   const model = "voyage-3.5-lite";
   return {
-    id: `voyage:${model}`,
+    id: `voyage:${model}+${ROWTEXT_VERSION}`,
     dim: 1024,
     async init() {},
     embed: (texts) =>

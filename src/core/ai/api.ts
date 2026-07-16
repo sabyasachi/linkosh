@@ -6,11 +6,16 @@
 // postMessage (structured clone) — never chrome.runtime.
 import type { AiSettings, EmbedderStatus, OrchestratorStatus, ProviderId, SearchMode, SearchResult } from "../types.ts";
 
+/** Retrieval-trained models (bge) embed search queries and documents
+ *  differently (a query-side instruction prefix); symmetric models ignore
+ *  the distinction. Defaults to "document" — the safe choice for row text. */
+export type EmbedKind = "query" | "document";
+
 export interface EmbedderApi {
   /** Swap/initialize the embedding provider. Returns the active model id. */
   configure(args: { settings: AiSettings | null }): { model: string };
   status(args: Record<string, never>): EmbedderStatus;
-  embed(args: { texts: string[] }): Float32Array[];
+  embed(args: { texts: string[]; kind?: EmbedKind }): Float32Array[];
 }
 
 export interface AiApi {

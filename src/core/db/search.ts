@@ -7,9 +7,40 @@ import type { SqlDatabase } from "./port.ts";
 import { fetchByIds, search as ftsSearch } from "./items.ts";
 import { toVector } from "./embeddings.ts";
 
-// Similarity scores below this are noise for MiniLM-class models; hybrid and
-// semantic search drop such candidates rather than padding results with them.
-export const MIN_SIMILARITY = 0.25;
+// Similarity floor for semantic ranking. A fixed absolute floor fails at both
+// ends (measured on a 6.8k-row corpus, see
+// docs/plans/search-quality-analysis.md): unrelated short texts score high
+// enough that a low floor filters no noise, while genuinely relevant
+// lexically-different rows can score below it. Instead the floor adapts to
+// the query — a fraction of the top score, clamped so an outlier top hit
+// can't nuke recall (max) and a weak-top query still sheds pure noise (min).
+//
+// The band is a property of the embedding model's score distribution, keyed
+// off the model id because this runs in the DB worker, which only ever sees
+// the id string ("more like this" reads it straight off the row). Measured
+// 2026-07-16: MiniLM random-pair sims mean ~0.09 / max ~0.4; bge compresses
+// everything upward (random-pair mean ~0.51, max ~0.70), so its floor lives
+// in a much higher, narrower band.
+export interface SimilarityBand {
+  factor: number;
+  min: number;
+  max: number;
+}
+const DEFAULT_BAND: SimilarityBand = { factor: 0.5, min: 0.2, max: 0.35 }; // MiniLM-scale
+// max 0.6, not higher: collection-labeled thin rows can hit ~0.8 on a matching
+// query, and a floor tracking that outlier top squeezed out genuinely relevant
+// articles in the 2026-07-16 validation run.
+const BGE_BAND: SimilarityBand = { factor: 0.8, min: 0.55, max: 0.6 };
+
+export function floorBandFor(model: string): SimilarityBand {
+  return model.startsWith("local:bge-") ? BGE_BAND : DEFAULT_BAND;
+}
+
+/** Query-adaptive similarity floor given the best similarity in the result.
+ *  Never exceeds the top score itself, so rank 1 always survives. */
+export function similarityFloor(topScore: number, band: SimilarityBand): number {
+  return Math.min(topScore, Math.min(band.max, Math.max(band.min, band.factor * topScore)));
+}
 
 export interface CosineTopArgs {
   queryVector: Float32Array;
@@ -64,14 +95,21 @@ export function hybridSearch(
   { query, queryVector, model, provider, limit = 200 }: HybridSearchArgs
 ): SavedItem[] {
   const K = 60;
-  const CANDIDATES = 100;
+  // The vector arm is hybrid's recall channel: RRF is rank-based, so deep
+  // low-similarity candidates dilute harmlessly instead of polluting — hence
+  // no score floor at all here (bge packs relevant-but-lexically-different
+  // rows inside its noise *score* band while their *rank* stays useful; a
+  // band.min guard re-lost the canonical missing tweet in validation). The
+  // pool is deep enough (500, was 100) that a relevant row with no FTS token
+  // overlap still enters the fusion. cosineTop scans every row either way;
+  // the pool size only bounds what's kept.
+  const CANDIDATES = 500;
   const ftsRows = ftsSearch(db, { provider: provider ?? null, query, limit: CANDIDATES });
   const vecTop = cosineTop(db, {
     queryVector,
     model,
     provider: provider ?? null,
     limit: CANDIDATES,
-    minScore: MIN_SIMILARITY,
   });
 
   const score = new Map<number, number>();
@@ -104,14 +142,15 @@ export function semanticSearch(
   db: SqlDatabase,
   { queryVector, model, provider, limit = 200 }: SemanticSearchArgs
 ): SavedItem[] {
+  const band = floorBandFor(model);
   const top = cosineTop(db, {
     queryVector,
     model,
     provider: provider ?? null,
     limit,
-    minScore: MIN_SIMILARITY,
+    minScore: band.min,
   });
-  return withSimilarity(db, top);
+  return withSimilarity(db, applyFloor(top, band));
 }
 
 /** Nearest neighbors of an existing item ("more like this"). */
@@ -125,15 +164,27 @@ export function similar(
   )[0];
   if (!row) throw new Error(`No item with id ${id}`);
   if (!row.embedding || row.embeddingModel === null) throw new Error("Item not embedded yet");
+  const band = floorBandFor(row.embeddingModel);
   const top = cosineTop(db, {
     queryVector: toVector(row.embedding),
     model: row.embeddingModel,
     provider: provider ?? null,
     limit,
     excludeId: id,
-    minScore: MIN_SIMILARITY,
+    minScore: band.min,
   });
-  return withSimilarity(db, top);
+  return withSimilarity(db, applyFloor(top, band));
+}
+
+/** Drop candidates below the query-adaptive floor (cosineTop returns sorted
+ *  desc, so the first entry is the top score). */
+function applyFloor(
+  top: { id: number; similarity: number }[],
+  band: SimilarityBand
+): { id: number; similarity: number }[] {
+  if (!top.length) return top;
+  const floor = similarityFloor(top[0]!.similarity, band);
+  return top.filter((t) => t.similarity >= floor);
 }
 
 function withSimilarity(db: SqlDatabase, top: { id: number; similarity: number }[]): SavedItem[] {
