@@ -18,6 +18,11 @@ export interface PrefsSchema {
   captureRaw: boolean;
   /** Dev: cap syncs at ~100 items for smoke tests. */
   testMode: boolean;
+  /** Services the user has switched off (options page): hidden from the
+   *  popup's dropdown and skipped by "sync all". Stored as the disabled set
+   *  so new providers default to enabled. Items already synced stay in the
+   *  DB (it's an archive) — disabling only stops future syncs. */
+  disabledProviders: ProviderId[];
   "ai:settings": AiSettings | null;
 }
 

@@ -33,8 +33,28 @@ export type SyncRunStatus =
   | { running: false }
   | { running: true; scope: ProviderId | "all"; startedAt: number; stopping: boolean };
 
+/** One provider's row on the status page: user enablement, a cookie-based
+ *  login probe, and store/sync stats. */
+export interface ProviderStatusRow {
+  id: ProviderId;
+  label: string;
+  enabled: boolean;
+  /** null = the provider has no login probe or it failed (unknown). */
+  loggedIn: boolean | null;
+  /** Rows stored for this provider. */
+  items: number;
+  /** Newest stored item's save date (epoch ms), null when unknown. */
+  lastItemAt: number | null;
+  /** Last successful sync (the incremental watermark), null = never. */
+  syncedAt: number | null;
+}
+
 export interface BackgroundApi {
+  /** Enabled providers only — this feeds the popup's service dropdown. */
   listProviders(args: Record<string, never>): { id: ProviderId; label: string }[];
+  /** Every registered provider (disabled included) — the status page and the
+   *  options page's enablement toggles. */
+  providerStatus(args: Record<string, never>): ProviderStatusRow[];
   /** provider: null means "across all providers" (the UI's "all" tab). */
   listItems(args: { provider: ProviderId | null; limit?: number; offset?: number }): {
     items: SavedItem[];
@@ -103,6 +123,15 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
   // action replays them through the same pipeline later. Off = normal sync.
   const getCaptureRaw = async () => Boolean(await prefs.get("captureRaw"));
 
+  // User enablement (options page). Stored as the disabled set so providers
+  // added in a future version default to enabled.
+  const getDisabled = async () => new Set<ProviderId>((await prefs.get("disabledProviders")) ?? []);
+  const allProviders = () => Object.values(providers).filter((p): p is Provider => Boolean(p));
+  const enabledProviders = async () => {
+    const disabled = await getDisabled();
+    return allProviders().filter((p) => !disabled.has(p.id));
+  };
+
   const syncOptions = async (full: boolean | undefined) => ({
     full: full ?? false,
     captureRaw: await getCaptureRaw(),
@@ -143,10 +172,25 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
   };
 
   return {
-    listProviders: () =>
-      Object.values(providers)
-        .filter((p): p is Provider => Boolean(p))
-        .map((p) => ({ id: p.id, label: p.label })),
+    listProviders: async () => (await enabledProviders()).map((p) => ({ id: p.id, label: p.label })),
+
+    providerStatus: async () => {
+      const disabled = await getDisabled();
+      const stats = new Map((await db.providerStats({})).map((row) => [row.provider, row]));
+      return Promise.all(
+        allProviders().map(async (p) => ({
+          id: p.id,
+          label: p.label,
+          enabled: !disabled.has(p.id),
+          // A probe failure (e.g. missing cookie permission) reads as unknown,
+          // not logged-out — the status page renders it as "—".
+          loggedIn: p.checkLogin ? await p.checkLogin().catch(() => null) : null,
+          items: stats.get(p.id)?.items ?? 0,
+          lastItemAt: stats.get(p.id)?.lastItemAt ?? null,
+          syncedAt: (await getMeta(p.id))?.syncedAt ?? null,
+        }))
+      );
+    },
 
     listItems: async ({ provider, limit, offset }) => ({
       items: await db.list({ provider, ...(limit !== undefined ? { limit } : {}), ...(offset !== undefined ? { offset } : {}) }),
@@ -168,7 +212,13 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
       runSync(provider, async (stop) => sync.syncProvider(provider, { ...(await syncOptions(full)), stop })),
 
     syncAll: ({ full }) =>
-      runSync("all", async (stop) => sync.syncAllProviders({ ...(await syncOptions(full)), stop })),
+      runSync("all", async (stop) =>
+        sync.syncAllProviders({
+          ...(await syncOptions(full)),
+          include: (await enabledProviders()).map((p) => p.id),
+          stop,
+        })
+      ),
 
     syncStatus: () =>
       running

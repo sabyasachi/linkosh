@@ -214,6 +214,7 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
     const reports: SyncReport[] = [];
     for (const provider of Object.values(providers)) {
       if (!provider) continue;
+      if (opts.include && !opts.include.includes(provider.id)) continue; // disabled by the user
       if (opts.stop?.aborted) break; // stop between providers; finished reports stand
       reports.push(await syncProvider(provider.id, opts));
     }

@@ -250,6 +250,24 @@ export function search(db: SqlDatabase, { provider, query, limit = 200 }: Search
   }
 }
 
+/** One row per provider that has items stored (status page input). */
+export interface ProviderStatsRow {
+  provider: ProviderId;
+  items: number;
+  /** Newest item's save date — MAX over the same COALESCE the list sorts by
+   *  (bookmarked_at, else published_at); null when no row exposes either. */
+  lastItemAt: number | null;
+}
+
+export function providerStats(db: SqlDatabase): ProviderStatsRow[] {
+  return db.rows<ProviderStatsRow>(
+    `SELECT provider, COUNT(*) AS items,
+            MAX(COALESCE(bookmarked_at, published_at)) AS lastItemAt
+     FROM saved_items GROUP BY provider`,
+    []
+  );
+}
+
 export function count(db: SqlDatabase, { provider }: { provider?: ProviderId | null } = {}): number {
   return db.rows<{ n: number }>(
     `SELECT COUNT(*) AS n FROM saved_items ${provider ? "WHERE provider = ?" : ""}`,

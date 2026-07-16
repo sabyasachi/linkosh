@@ -181,6 +181,9 @@ export function createProvider(env: ProviderEnv): Provider {
   return {
     id: "instagram",
     label: "Instagram",
+    // Same cookie pair getCsrfToken requires.
+    checkLogin: async () =>
+      Boolean((await env.getCookie(ORIGIN, "sessionid")) && (await env.getCookie(ORIGIN, "csrftoken"))),
     async fetchItems({ onPage }) {
       const csrfToken = await getCsrfToken();
       return env.withTab(TAB, async (tabId) => {

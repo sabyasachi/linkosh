@@ -17,6 +17,7 @@ export interface DbApi {
   list(args: items.ListArgs): SavedItem[];
   search(args: items.SearchArgs): SavedItem[];
   count(args: { provider?: ProviderId | null }): number;
+  providerStats(args: Record<string, never>): items.ProviderStatsRow[];
   clearItems(args: { provider?: ProviderId | null }): { deleted: number };
 
   rawStore(args: raw.RawStoreArgs): { stored: number };
@@ -59,6 +60,7 @@ export function createDbService(db: SqlDatabase): DbApi {
     list: (args) => items.list(db, args),
     search: (args) => items.search(db, args),
     count: (args) => items.count(db, args),
+    providerStats: () => items.providerStats(db),
     clearItems: (args) => items.clearItems(db, args),
 
     rawStore: (args) => raw.rawStore(db, args),

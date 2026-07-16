@@ -10,7 +10,7 @@ import { createClient } from "../../core/rpc/client.ts";
 import { runtimeTransport, type RuntimeLike } from "../../core/rpc/transports.ts";
 import { createChromePrefs } from "../../ext/chrome-prefs.ts";
 import type { BackgroundApi } from "../../ext/background-service.ts";
-import type { AiSettings, EmbedProviderId, OrchestratorStatus } from "../../core/types.ts";
+import type { AiSettings, EmbedProviderId, OrchestratorStatus, ProviderId } from "../../core/types.ts";
 import type { PrefsSchema } from "../../core/prefs.ts";
 import type { RawStatsRow } from "../../core/db/raw.ts";
 
@@ -112,6 +112,7 @@ function PrefToggle({
 }
 
 function OptionsApp() {
+  const [services, setServices] = useState<{ id: ProviderId; label: string; enabled: boolean }[]>([]);
   const [embedProvider, setEmbedProvider] = useState<EmbedProviderId>("local");
   const [keys, setKeys] = useState<Record<KeyName, string>>({ openai: "", gemini: "", voyage: "", anthropic: "" });
   const [saveStatus, setSaveStatus] = useState("");
@@ -150,6 +151,12 @@ function OptionsApp() {
       const settings = await prefs.get("ai:settings");
       setEmbedProvider(settings?.embedProvider ?? "local");
       setKeys((prev) => ({ ...prev, ...(settings?.keys ?? {}) }));
+      // The full registry with enablement — listProviders would hide already-
+      // disabled services, making them impossible to re-enable.
+      void api
+        .providerStatus({})
+        .then((rows) => setServices(rows.map(({ id, label, enabled }) => ({ id, label, enabled }))))
+        .catch(() => {});
       await Promise.all([refreshStatus(), refreshRawStats()]);
     })();
     statusTimer.current = setInterval(() => void refreshStatus(), 2000);
@@ -279,9 +286,42 @@ function OptionsApp() {
   const pendingRaw = rawCount("pending");
   const failedRaw = rawCount("failed");
 
+  const toggleService = (id: ProviderId, enabled: boolean) => {
+    setServices((prev) => {
+      const next = prev.map((s) => (s.id === id ? { ...s, enabled } : s));
+      void prefs.set("disabledProviders", next.filter((s) => !s.enabled).map((s) => s.id));
+      return next;
+    });
+  };
+
   return (
     <>
       <h1>Linkosh — Options</h1>
+
+      <h2>Services</h2>
+      <p class="hint">
+        Choose which services to sync. A disabled service is hidden from the popup's dropdown and
+        skipped by “All services” sync; items already saved from it are kept.
+      </p>
+      <div class="services">
+        {services.map((s) => (
+          <label class="service-toggle" style="font-weight: 400">
+            <input
+              type="checkbox"
+              style="width: auto; margin-right: 6px"
+              checked={s.enabled}
+              onChange={(e) => toggleService(s.id, (e.currentTarget as HTMLInputElement).checked)}
+            />
+            {s.label}
+          </label>
+        ))}
+      </div>
+      <p class="hint">
+        <a href="status.html" target="_blank">
+          Service status
+        </a>{" "}
+        — login state, saved-item counts and last sync per service.
+      </p>
 
       <h2>Extension icon</h2>
       <PrefToggle

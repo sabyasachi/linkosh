@@ -55,6 +55,8 @@ export function createProvider(env: ProviderEnv): Provider {
   return {
     id: "hackernews",
     label: "Hacker News",
+    // Same cookie getUsername requires — presence means the sync auth guard passes.
+    checkLogin: async () => Boolean(await env.getCookie(ORIGIN, "user")),
     async fetchItems({ onPage }) {
       const account = await getUsername();
 

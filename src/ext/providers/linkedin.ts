@@ -93,6 +93,8 @@ export function createProvider(env: ProviderEnv): Provider {
   return {
     id: "linkedin",
     label: "LinkedIn",
+    // Same cookie getCsrfToken requires.
+    checkLogin: async () => Boolean(await env.getCookie(ORIGIN, "JSESSIONID")),
     async fetchItems({ onPage }) {
       const csrfToken = await getCsrfToken();
       const account = await getAccount(csrfToken);

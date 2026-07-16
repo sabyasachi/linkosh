@@ -408,3 +408,32 @@ test("syncAllProviders aggregates counts and carries per-provider reports", asyn
   assert.equal(ss.status, "ok");
   db.close();
 });
+
+test("syncAllProviders honors include: providers outside it are skipped, no report emitted", async () => {
+  const db = await openDb();
+  const ok = scriptedProvider([pageBody([1], null)]);
+  let skippedRan = false;
+  const skipped: Provider = {
+    id: "hackernews",
+    label: "Hacker News",
+    async fetchItems() {
+      skippedRan = true;
+      throw new Error("should not run");
+    },
+  };
+  const meta = new Map<ProviderId, ProviderMeta>();
+  const sync = createSync({
+    providers: { substack: ok.provider, hackernews: skipped },
+    db: asyncDbApi(db),
+    getMeta: async (id) => meta.get(id) ?? null,
+    setMeta: async (id, m) => void meta.set(id, m),
+  });
+  const res = await sync.syncAllProviders({ include: ["substack"] });
+  assert.equal(skippedRan, false);
+  assert.deepEqual(
+    res.reports.map((r) => r.providerId),
+    ["substack"]
+  );
+  assert.equal(res.inserted, 1);
+  db.close();
+});

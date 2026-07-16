@@ -53,6 +53,8 @@ export function createProvider(env: ProviderEnv): Provider {
   return {
     id: "substack",
     label: "Substack",
+    // Same cookie fetchItems' auth guard requires.
+    checkLogin: async () => Boolean(await env.getCookie(ORIGIN, "substack.sid")),
     async fetchItems({ onPage }) {
       if (!(await env.getCookie(ORIGIN, "substack.sid"))) {
         throw new ProviderError("Not logged in to Substack. Open substack.com and sign in first.", {
