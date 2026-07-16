@@ -199,3 +199,98 @@ test("maintenance ops are rejected while a sync runs, allowed after", async () =
   assert.deepEqual(await svc.rawClear({}), { cleared: true });
   db.close();
 });
+
+/** An instantly-completing one-page provider (no gate), optionally with a
+ *  login probe, for the enablement/status tests. */
+function instantProvider(id: "substack" | "hackernews", loggedIn?: boolean): Provider {
+  return {
+    id,
+    label: id === "substack" ? "Substack" : "Hacker News",
+    ...(loggedIn === undefined ? {} : { checkLogin: async () => loggedIn }),
+    async fetchItems({ onPage }) {
+      // Both ids speak the Substack page shape; only the substack provider's
+      // pages are actually parsed in these tests (hackernews stays disabled).
+      await onPage("tester", { kind: "items", url: "/saved?p=0", page: 0, body: pageBody([1]) });
+      return { account: "tester" };
+    },
+  };
+}
+
+test("disabled providers are hidden from listProviders and skipped by syncAll, but visible in providerStatus", async () => {
+  const db = await openDb();
+  const svc = createBackgroundService({
+    providers: { substack: instantProvider("substack"), hackernews: instantProvider("hackernews") },
+    db: dbClient(db),
+    ai: aiStub,
+    prefs: createMemoryPrefs({ disabledProviders: ["hackernews"] }),
+  });
+
+  assert.deepEqual(
+    (await svc.listProviders({})).map((p) => p.id),
+    ["substack"]
+  );
+
+  const all = await svc.syncAll({});
+  assert.deepEqual(
+    all.reports.map((r) => r.providerId),
+    ["substack"]
+  );
+
+  const status = await svc.providerStatus({});
+  assert.deepEqual(
+    status.map((r) => [r.id, r.enabled]),
+    [
+      ["substack", true],
+      ["hackernews", false],
+    ]
+  );
+  db.close();
+});
+
+test("providerStatus reports login probe, item count, last item date and sync watermark", async () => {
+  const db = await openDb();
+  const svc = createBackgroundService({
+    providers: { substack: instantProvider("substack", true), hackernews: instantProvider("hackernews", false) },
+    db: dbClient(db),
+    ai: aiStub,
+    prefs: createMemoryPrefs({ disabledProviders: ["hackernews"] }),
+  });
+
+  const before = await svc.providerStatus({});
+  const substackBefore = before.find((r) => r.id === "substack")!;
+  assert.deepEqual(
+    { loggedIn: substackBefore.loggedIn, items: substackBefore.items, lastItemAt: substackBefore.lastItemAt, syncedAt: substackBefore.syncedAt },
+    { loggedIn: true, items: 0, lastItemAt: null, syncedAt: null }
+  );
+  assert.equal(before.find((r) => r.id === "hackernews")!.loggedIn, false);
+
+  const report = await svc.sync({ provider: "substack" });
+  assert.equal(report.status, "ok");
+
+  const after = (await svc.providerStatus({})).find((r) => r.id === "substack")!;
+  assert.equal(after.items, 1);
+  // The fixture post carries post_date 2026-01-01 → published_at.
+  assert.equal(after.lastItemAt, Date.parse("2026-01-01T00:00:00.000Z"));
+  assert.ok(after.syncedAt !== null && after.syncedAt > 0);
+  db.close();
+});
+
+test("providerStatus reads loggedIn as null when the provider has no probe or it throws", async () => {
+  const db = await openDb();
+  const throwing: Provider = {
+    ...instantProvider("hackernews"),
+    checkLogin: async () => {
+      throw new Error("no cookie permission");
+    },
+  };
+  const svc = createBackgroundService({
+    providers: { substack: instantProvider("substack"), hackernews: throwing },
+    db: dbClient(db),
+    ai: aiStub,
+    prefs: createMemoryPrefs(),
+  });
+  const status = await svc.providerStatus({});
+  assert.equal(status.find((r) => r.id === "substack")!.loggedIn, null); // no probe
+  assert.equal(status.find((r) => r.id === "hackernews")!.loggedIn, null); // probe failed
+  db.close();
+});

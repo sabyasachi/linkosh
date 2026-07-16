@@ -190,6 +190,11 @@ export interface Provider {
   id: ProviderId;
   label: string;
   fetchItems(ctx: FetchContext): Promise<{ account: string }>;
+  /** Cheap login probe for the status page — mirrors the provider's own sync
+   *  precondition (session-cookie presence), so true means fetchItems would
+   *  get past its auth guard. No network requests; a stale-but-present
+   *  session still reads as logged in until a sync proves otherwise. */
+  checkLogin?(): Promise<boolean>;
 }
 
 export interface SyncCounts {
@@ -226,6 +231,10 @@ export interface SyncOptions {
   captureRaw?: boolean;
   /** Test mode: stop signalling after ~this many items (0 = unlimited). */
   maxItems?: number;
+  /** syncAllProviders only: restrict the walk to these providers (user
+   *  enablement). Absent = all registered providers. syncProvider ignores it —
+   *  an explicit single-provider sync is always honored. */
+  include?: readonly ProviderId[];
   /** Cooperative stop token, checked at every page boundary. Structural on
    *  purpose: a real AbortSignal satisfies it while core/ stays bare ES2022
    *  (no DOM lib, so no AbortSignal type here). */

@@ -69,3 +69,27 @@ button:disabled { opacity: 0.6; cursor: default; }
   font-size: 12px;
 }
 #dev-status { min-height: 18px; margin-top: 10px; color: var(--muted); }
+.services { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.services .service-toggle { margin: 4px 0; }
+a { color: var(--accent); }
+
+/* Service status page (status.html shares this stylesheet). */
+.muted { color: var(--muted); }
+.status-error { color: #c0392b; }
+.status-table { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 13px; }
+.status-table th, .status-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  white-space: nowrap;
+}
+.status-table th { font-weight: 600; }
+.status-table .num { text-align: right; }
+.status-table tr.disabled td { color: var(--muted); }
+.login-ok { color: #1e8e3e; }
+.login-out { color: #c0392b; }
+@media (prefers-color-scheme: dark) {
+  .login-ok { color: #5bd07f; }
+  .login-out { color: #ef8a80; }
+  .status-error { color: #ef8a80; }
+}

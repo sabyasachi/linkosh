@@ -103,6 +103,8 @@ export function createProvider(env: ProviderEnv): Provider {
   return {
     id: "youtube",
     label: "YouTube",
+    // Same cookie fetchItems' auth guard requires (Google session).
+    checkLogin: async () => Boolean(await env.getCookie(ORIGIN, "SAPISID")),
     async fetchItems({ onPage }) {
       if (!(await env.getCookie(ORIGIN, "SAPISID"))) {
         throw new ProviderError("Not logged in to YouTube. Open youtube.com and sign in first.", {

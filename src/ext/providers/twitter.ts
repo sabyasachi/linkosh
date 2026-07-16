@@ -200,6 +200,9 @@ export function createProvider(env: ProviderEnv): Provider {
   return {
     id: "twitter",
     label: "X",
+    // Same cookie pair getCsrfToken requires.
+    checkLogin: async () =>
+      Boolean((await env.getCookie(ORIGIN, "auth_token")) && (await env.getCookie(ORIGIN, "ct0"))),
     async fetchItems({ onPage }) {
       const csrfToken = await getCsrfToken();
       return env.withTab(TAB, async (tabId) => {

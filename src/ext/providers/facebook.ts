@@ -171,6 +171,9 @@ export function createProvider(env: ProviderEnv): Provider {
   return {
     id: "facebook",
     label: "Facebook",
+    // Same cookie pair getUserId requires.
+    checkLogin: async () =>
+      Boolean((await env.getCookie(ORIGIN, "c_user")) && (await env.getCookie(ORIGIN, "xs"))),
     async fetchItems({ onPage }) {
       const userId = await getUserId();
       return env.withTab(TAB, async (tabId) => {
