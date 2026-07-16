@@ -20,7 +20,9 @@ export interface PendingEmbeddingRow {
 
 /** Rows still needing an embedding for the current model. `IS NOT` (not `!=`)
  *  so rows with a NULL embedding_model match too. Newest first so fresh syncs
- *  become semantically searchable first. */
+ *  become semantically searchable first. Soft-deleted rows are skipped —
+ *  search can't surface them, so embedding them is wasted compute (a restored
+ *  row that still lacks a vector simply re-enters this backlog). */
 export function pendingEmbeddings(
   db: SqlDatabase,
   { model, limit = 64 }: { model: string; limit?: number }
@@ -28,7 +30,7 @@ export function pendingEmbeddings(
   return db
     .rows<Omit<PendingEmbeddingRow, "collection"> & { collection: string }>(
       `SELECT id, url, title, publication, summary, collection FROM saved_items
-       WHERE embedding IS NULL OR embedding_model IS NOT ?
+       WHERE (embedding IS NULL OR embedding_model IS NOT ?) AND deleted_at IS NULL
        ORDER BY id DESC LIMIT ?`,
       [model, limit]
     )
@@ -54,10 +56,12 @@ export function storeEmbeddings(
 }
 
 export function embeddingStats(db: SqlDatabase, { model }: { model: string }): { total: number; embedded: number } {
+  // Live rows only, matching pendingEmbeddings — else skipped deleted rows
+  // would read as a permanent phantom backlog in the popup's status notes.
   const row = db.rows<{ total: number; embedded: number | null }>(
     `SELECT COUNT(*) AS total,
             SUM(embedding IS NOT NULL AND embedding_model IS ?) AS embedded
-     FROM saved_items`,
+     FROM saved_items WHERE deleted_at IS NULL`,
     [model]
   )[0]!;
   return { total: row.total, embedded: row.embedded ?? 0 };

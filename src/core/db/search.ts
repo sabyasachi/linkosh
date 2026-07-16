@@ -59,7 +59,8 @@ export function cosineTop(
 ): { id: number; similarity: number }[] {
   const candidates = db.rows<{ id: number; embedding: Uint8Array }>(
     `SELECT id, embedding FROM saved_items
-     WHERE embedding IS NOT NULL AND embedding_model = ? ${provider ? "AND provider = ?" : ""}`,
+     WHERE embedding IS NOT NULL AND embedding_model = ? AND deleted_at IS NULL
+       ${provider ? "AND provider = ?" : ""}`,
     provider ? [model, provider] : [model]
   );
   const top: { id: number; similarity: number }[] = []; // sorted desc, length <= limit

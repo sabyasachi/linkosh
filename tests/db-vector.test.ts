@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { openDb } from "./helpers/open-db.ts";
-import { upsert } from "../src/core/db/items.ts";
+import { upsert, setDeleted } from "../src/core/db/items.ts";
 import { storeEmbeddings, pendingEmbeddings, embeddingStats, toVector } from "../src/core/db/embeddings.ts";
 import { cosineTop, hybridSearch, semanticSearch, similar } from "../src/core/db/search.ts";
 import type { SqlDatabase } from "../src/core/db/port.ts";
@@ -204,6 +204,39 @@ test("floor band is per-model: bge ids get the high compressed band, rank 1 alwa
   // matches" rather than a list of noise.
   const none = semanticSearch(db, { queryVector: vec(-1, 0), model: "local:bge-small-en-v1.5-q8+r2" });
   assert.deepEqual(none, []);
+  db.close();
+});
+
+test("soft-deleted rows are invisible to vector rankings and the embedding backlog", async () => {
+  const db = await openDb();
+  const seeded = seed(db, "hackernews", [
+    { externalId: "live", title: "coffee brewing" },
+    { externalId: "gone", title: "coffee history" },
+    { externalId: "backlog", title: "coffee grinders" }, // never embedded
+  ]);
+  const byExt = new Map(seeded.map((r) => [r.external_id, r.id]));
+  storeEmbeddings(db, {
+    model: "m",
+    rows: [
+      { id: byExt.get("live")!, vector: vec(0.9, Math.sqrt(1 - 0.81)) },
+      { id: byExt.get("gone")!, vector: vec(1, 0) }, // would outrank "live"
+    ],
+  });
+  setDeleted(db, { id: byExt.get("gone")!, deleted: true });
+
+  const q = vec(1, 0);
+  assert.deepEqual(cosineTop(db, { queryVector: q, model: "m" }).map((t) => t.id), [byExt.get("live")]);
+  assert.deepEqual(semanticSearch(db, { queryVector: q, model: "m" }).map((r) => r.externalId), ["live"]);
+  const hybrid = hybridSearch(db, { query: "coffee", queryVector: q, model: "m" });
+  assert.ok(!hybrid.some((r) => r.externalId === "gone"));
+  // "gone" was "live"'s only embedded neighbor.
+  assert.deepEqual(similar(db, { id: byExt.get("live")! }), []);
+
+  // The backlog skips deleted rows, and the stats stay consistent with it —
+  // a deleted unembedded row must not read as a permanent phantom backlog.
+  setDeleted(db, { id: byExt.get("backlog")!, deleted: true });
+  assert.deepEqual(pendingEmbeddings(db, { model: "m" }), []);
+  assert.deepEqual(embeddingStats(db, { model: "m" }), { total: 1, embedded: 1 });
   db.close();
 });
 

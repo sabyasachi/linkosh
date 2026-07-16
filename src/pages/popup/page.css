@@ -30,19 +30,30 @@ body.page #search-row {
   margin: 12px 16px 0;
 }
 
+body.page #trash-banner {
+  margin: 12px 16px 0;
+}
+
 body.page #search {
   padding: 10px 14px;
   font-size: 15px;
 }
 
-/* On the full page the ≈ button appears on row hover only (always visible in
-   the popup, where there is no reliable hover affordance on touchpads). */
-body.page li.item button.similar {
+/* On the full page the row-action buttons appear on row hover only (always
+   visible in the popup, where there is no reliable hover affordance on
+   touchpads). */
+body.page li.item button.similar,
+body.page li.item button.delete,
+body.page li.item button.restore {
   visibility: hidden;
 }
 
 body.page li.item:hover button.similar,
-body.page li.item button.similar:focus-visible {
+body.page li.item button.similar:focus-visible,
+body.page li.item:hover button.delete,
+body.page li.item button.delete:focus-visible,
+body.page li.item:hover button.restore,
+body.page li.item button.restore:focus-visible {
   visibility: visible;
 }
 

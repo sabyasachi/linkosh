@@ -76,6 +76,8 @@ export interface SavedItem {
   publishedAt: number | null;
   /** Row insert time (epoch ms) — the incremental-sync watermark. */
   createdAt: number;
+  /** Soft-delete time (epoch ms); null = live. */
+  deletedAt: number | null;
   kind: string;
   duration: number | null;
   collection: string[];
