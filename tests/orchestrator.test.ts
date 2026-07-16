@@ -140,6 +140,13 @@ test("hybrid and semantic search end-to-end over the fake embedding space", asyn
   assert.ok(semantic.items.length >= 1);
   assert.equal(semantic.items[0]!.title, "coffee brewing guide");
   assert.ok(semantic.items[0]!.similarity! > 0.9); // near-identical token bag
+
+  // Retrieval-trained models (bge) need to know queries from documents: the
+  // backlog embeds rows as "document", search embeds the query as "query".
+  const kinds = fake.calls.filter((c) => c.op === "embed").map((c) => c.kind);
+  assert.ok(kinds.length >= 3);
+  assert.deepEqual(kinds.slice(0, -2), Array(kinds.length - 2).fill("document"));
+  assert.deepEqual(kinds.slice(-2), ["query", "query"]);
   db.close();
 });
 

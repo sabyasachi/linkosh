@@ -156,9 +156,11 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
 
     // mode is the user's selector choice; the result reports what actually
     // ran (may differ when the model isn't ready or the query uses FTS
-    // operators).
+    // operators). Depth matches hybridSearch's fusion pool (CANDIDATES = 500)
+    // so a row that entered the fusion is never silently cut by this limit;
+    // search results render single-shot in the UI, which handles 500 rows.
     search: ({ provider, query, mode }) =>
-      ai.search({ provider, query, limit: 200, ...(mode !== undefined ? { mode } : {}) }),
+      ai.search({ provider, query, limit: 500, ...(mode !== undefined ? { mode } : {}) }),
 
     similar: ({ id, provider }) => db.similar({ id, provider }),
 

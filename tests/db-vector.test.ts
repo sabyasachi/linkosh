@@ -184,6 +184,29 @@ test("semanticSearch floor relaxes below the old 0.25 when the top score is weak
   db.close();
 });
 
+test("floor band is per-model: bge ids get the high compressed band, rank 1 always survives", async () => {
+  const db = await openDb();
+  const ids = seed(db, "hackernews", [{}, {}, {}]).map((r) => r.id);
+  const withSim = (s: number) => vec(s, Math.sqrt(1 - s * s));
+  // bge similarity scale: clamp(0.8·top, 0.55, 0.65). Top 0.7 → floor 0.56.
+  storeEmbeddings(db, {
+    model: "local:bge-small-en-v1.5-q8+r2",
+    rows: [
+      { id: ids[0]!, vector: withSim(0.7) },
+      { id: ids[1]!, vector: withSim(0.6) }, // kept under bge band, would be kept under default too
+      { id: ids[2]!, vector: withSim(0.5) }, // below the bge floor: dropped
+    ],
+  });
+  const items = semanticSearch(db, { queryVector: vec(1, 0), model: "local:bge-small-en-v1.5-q8+r2" });
+  assert.deepEqual(items.map((r) => r.id), [ids[0], ids[1]]);
+
+  // A query where nothing clears the band's min comes back empty — "no good
+  // matches" rather than a list of noise.
+  const none = semanticSearch(db, { queryVector: vec(-1, 0), model: "local:bge-small-en-v1.5-q8+r2" });
+  assert.deepEqual(none, []);
+  db.close();
+});
+
 test("similar finds neighbors of an item, excluding itself; errors are explicit", async () => {
   const db = await openDb();
   const ids = seed(db, "hackernews", [{}, {}, {}]).map((r) => r.id);

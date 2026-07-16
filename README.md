@@ -102,10 +102,10 @@ providers later.
   `poster_handle` are the indexed columns). A
   query that fails to parse falls back to a plain substring scan.
 - Search also understands **meaning**, not just keywords: every item gets a
-  vector embedding computed **on-device** (quantized `all-MiniLM-L6-v2` via
+  vector embedding computed **on-device** (quantized `bge-small-en-v1.5` via
   [transformers.js](https://github.com/huggingface/transformers.js), running
   in a dedicated worker — the model downloads once from huggingface.co
-  (~23 MB) and is cached for offline use). The selector next to the search
+  (~34 MB) and is cached for offline use). The selector next to the search
   box picks the mode: **Text** (default; exactly the FTS5 behavior above),
   **Hybrid** (text and semantic rankings fused) or **Semantic** (pure
   similarity). Queries using FTS5 operators always run as text search. Each

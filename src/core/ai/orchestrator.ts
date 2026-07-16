@@ -12,7 +12,7 @@ import type {
   SearchMode,
   SearchResult,
 } from "../types.ts";
-import type { AiApi } from "./api.ts";
+import type { AiApi, EmbedKind } from "./api.ts";
 import { FTS_OPERATORS } from "../fts.ts";
 
 /** Version of the rowText recipe below, appended to every embedding provider
@@ -82,7 +82,7 @@ export interface OrchestratorDb {
 export interface OrchestratorEmbedder {
   configure(args: { settings: AiSettings | null }): Promise<{ model: string }>;
   status(args: Record<string, never>): Promise<EmbedderStatus>;
-  embed(args: { texts: string[] }): Promise<Float32Array[]>;
+  embed(args: { texts: string[]; kind?: EmbedKind }): Promise<Float32Array[]>;
 }
 
 export interface CreateOrchestratorOptions {
@@ -125,7 +125,7 @@ export function createOrchestrator({ db, ai, getSettings }: CreateOrchestratorOp
         if (!pending.length) break;
         for (let i = 0; i < pending.length; i += 16) {
           const batch = pending.slice(i, i + 16);
-          const vectors = await ai.embed({ texts: batch.map(rowText) });
+          const vectors = await ai.embed({ texts: batch.map(rowText), kind: "document" });
           await db.storeEmbeddings({
             model,
             rows: batch.map((row, j) => ({ id: row.id, vector: vectors[j]! })),
@@ -205,7 +205,7 @@ export function createOrchestrator({ db, ai, getSettings }: CreateOrchestratorOp
       return fts();
     }
 
-    const [queryVector] = await ai.embed({ texts: [query] });
+    const [queryVector] = await ai.embed({ texts: [query], kind: "query" });
     const args = { query, queryVector: queryVector!, model: aiStatus.model, provider: provider ?? null, limit };
     const items = mode === "semantic" ? await db.semanticSearch(args) : await db.hybridSearch(args);
     return { items, mode, requested };

@@ -27,6 +27,7 @@ export function embedText(text: string, dim: number = FAKE_DIM): Float32Array {
 export interface FakeAiCall {
   op: "configure" | "status" | "embed";
   texts?: string[];
+  kind?: "query" | "document";
 }
 
 /** An embedder client the orchestrator can drive. `calls` records every op
@@ -48,8 +49,8 @@ export function createFakeAi({ ready = true }: { ready?: boolean } = {}) {
       calls.push({ op: "status" });
       return { ready: state.ready, model: state.model, dim: FAKE_DIM, downloading: state.downloading, error: state.error };
     },
-    async embed({ texts }) {
-      calls.push({ op: "embed", texts });
+    async embed({ texts, kind }) {
+      calls.push({ op: "embed", texts, ...(kind !== undefined ? { kind } : {}) });
       if (!state.ready) throw new Error("model not ready");
       return texts.map((t) => embedText(t));
     },

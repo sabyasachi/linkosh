@@ -1,7 +1,16 @@
 # Embedding model A/B: MiniLM-L6 (current) vs bge-small-en-v1.5
 
-Status: evaluated offline (2026-07-16), no code change yet. Context in
-[search-quality-analysis.md](search-quality-analysis.md).
+Status: evaluated offline and **implemented** (2026-07-16) — local provider is now
+`Xenova/bge-small-en-v1.5` q8 with CLS pooling, an `EmbedKind` query/document distinction
+threads through `EmbedderApi` (bge prefixes queries), and the similarity floor became a
+per-model band (`floorBandFor` in core/db/search.ts). Validation findings that shaped the
+final shape: bge's compressed score scale needs band `{factor 0.8, min 0.55, max 0.6}`
+(max capped because collection-labeled thin rows hit ~0.8 and an outlier-tracking floor
+squeezed out real articles); the hybrid vector arm dropped its score guard entirely
+(rank-based RRF + the 500 pool is the right filter — a `band.min` guard re-lost the
+canonical missing tweet); the background search limit rose to 500 to match the fusion
+pool (the tweet lands at hybrid position 213 for "movie", and at #1 for "netflix").
+Context in [search-quality-analysis.md](search-quality-analysis.md).
 
 ## Question
 
