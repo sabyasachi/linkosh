@@ -42,7 +42,7 @@ objects/arrays as `{}` or `[]` once encoded by `db/ops.js`.
 | `duration` | `INTEGER` | Duration in seconds for video/audio items when exposed, otherwise `NULL`. |
 | `collection` | `TEXT NOT NULL DEFAULT ''` | JSON array text of user collection/list names. `ops.upsert` encodes arrays and merges names on conflict. |
 | `embedding` | `BLOB` | Raw little-endian `Float32Array` vector. Never send through `chrome.runtime`. |
-| `embedding_model` | `TEXT` | Model id for `embedding`, e.g. `local:minilm-l6-v2-q8`. |
+| `embedding_model` | `TEXT` | Model id for `embedding`, e.g. `local:minilm-l6-v2-q8+r2` (`+rN` = rowText recipe version, see `ROWTEXT_VERSION`). |
 | `poster_name` | `TEXT NOT NULL DEFAULT ''` | Author/channel display name for the content, not the saving user. |
 | `poster_handle` | `TEXT NOT NULL DEFAULT ''` | Author/channel handle or username when exposed, stored without decorative parentheses. |
 | `poster_bio` | `TEXT NOT NULL DEFAULT ''` | Author headline/bio when exposed. Display-only, not FTS-indexed. |

@@ -195,3 +195,25 @@ test("rowText joins content, falls back for empty rows, and truncates at 1000 ch
   assert.equal(rowText({ title: " ", publication: null, summary: null, url: "" }), "Saved item");
   assert.equal(rowText({ title: "x".repeat(2000), publication: null, summary: null }).length, 1000);
 });
+
+test("rowText appends topical collection labels, dropping provider-default ones", () => {
+  assert.equal(
+    rowText({ title: "t", publication: null, summary: null, collection: ["movie", "Watch Later"] }),
+    "t\nmovie"
+  );
+  // stoplist match is case-insensitive and whitespace-tolerant
+  assert.equal(
+    rowText({ title: "t", publication: null, summary: null, collection: [" UPVOTED "] }),
+    "t"
+  );
+  // a stoplisted-only collection on an empty row still falls through to the URL
+  assert.equal(
+    rowText({ title: "", publication: null, summary: null, url: "https://x.test/p", collection: ["posts"] }),
+    "https://x.test/p"
+  );
+  // labels alone are enough to make a thin row embeddable
+  assert.equal(
+    rowText({ title: "", publication: null, summary: null, url: "", collection: ["Philosophy", "books"] }),
+    "Philosophy, books"
+  );
+});

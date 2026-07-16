@@ -7,9 +7,21 @@ import type { SqlDatabase } from "./port.ts";
 import { fetchByIds, search as ftsSearch } from "./items.ts";
 import { toVector } from "./embeddings.ts";
 
-// Similarity scores below this are noise for MiniLM-class models; hybrid and
-// semantic search drop such candidates rather than padding results with them.
-export const MIN_SIMILARITY = 0.25;
+// Similarity floor for semantic ranking. A fixed absolute floor fails at both
+// ends with MiniLM-class models (measured on a 6.8k-row corpus, see
+// docs/plans/search-quality-analysis.md): unrelated short texts reach ~0.4, so
+// 0.25 filters almost no noise, while genuinely relevant lexically-different
+// rows can score below it. Instead the floor adapts to the query: half the top
+// score, clamped so an outlier top hit can't nuke recall (max) and a weak-top
+// query still sheds pure noise (min).
+export const SIM_FLOOR_MIN = 0.2;
+export const SIM_FLOOR_MAX = 0.35;
+export const SIM_FLOOR_FACTOR = 0.5;
+
+/** Query-adaptive similarity floor given the best similarity in the result. */
+export function similarityFloor(topScore: number): number {
+  return Math.min(SIM_FLOOR_MAX, Math.max(SIM_FLOOR_MIN, SIM_FLOOR_FACTOR * topScore));
+}
 
 export interface CosineTopArgs {
   queryVector: Float32Array;
@@ -64,14 +76,20 @@ export function hybridSearch(
   { query, queryVector, model, provider, limit = 200 }: HybridSearchArgs
 ): SavedItem[] {
   const K = 60;
-  const CANDIDATES = 100;
+  // The vector arm is hybrid's recall channel: RRF is rank-based, so deep
+  // low-similarity candidates dilute harmlessly instead of polluting — hence
+  // the loose absolute guard rather than the query-adaptive semantic floor,
+  // and a pool deep enough (500, was 100) that a relevant row with no FTS
+  // token overlap still enters the fusion. cosineTop scans every row either
+  // way; the pool size only bounds what's kept.
+  const CANDIDATES = 500;
   const ftsRows = ftsSearch(db, { provider: provider ?? null, query, limit: CANDIDATES });
   const vecTop = cosineTop(db, {
     queryVector,
     model,
     provider: provider ?? null,
     limit: CANDIDATES,
-    minScore: MIN_SIMILARITY,
+    minScore: SIM_FLOOR_MIN,
   });
 
   const score = new Map<number, number>();
@@ -109,9 +127,9 @@ export function semanticSearch(
     model,
     provider: provider ?? null,
     limit,
-    minScore: MIN_SIMILARITY,
+    minScore: SIM_FLOOR_MIN,
   });
-  return withSimilarity(db, top);
+  return withSimilarity(db, applyFloor(top));
 }
 
 /** Nearest neighbors of an existing item ("more like this"). */
@@ -131,9 +149,17 @@ export function similar(
     provider: provider ?? null,
     limit,
     excludeId: id,
-    minScore: MIN_SIMILARITY,
+    minScore: SIM_FLOOR_MIN,
   });
-  return withSimilarity(db, top);
+  return withSimilarity(db, applyFloor(top));
+}
+
+/** Drop candidates below the query-adaptive floor (cosineTop returns sorted
+ *  desc, so the first entry is the top score). */
+function applyFloor(top: { id: number; similarity: number }[]): { id: number; similarity: number }[] {
+  if (!top.length) return top;
+  const floor = similarityFloor(top[0]!.similarity);
+  return top.filter((t) => t.similarity >= floor);
 }
 
 function withSimilarity(db: SqlDatabase, top: { id: number; similarity: number }[]): SavedItem[] {

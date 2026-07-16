@@ -8,6 +8,7 @@
 // file.
 import { pipeline, env, type FeatureExtractionPipeline } from "../vendor/transformers.min.js";
 import type { AiSettings, DownloadProgress } from "../core/types.ts";
+import { ROWTEXT_VERSION } from "../core/ai/orchestrator.ts";
 
 export interface EmbeddingProvider {
   id: string;
@@ -60,7 +61,9 @@ async function loadLocalPipeline(
 export function createLocalProvider(): EmbeddingProvider {
   let extractor: FeatureExtractionPipeline | null = null;
   return {
-    id: "local:minilm-l6-v2-q8",
+    // The +rN suffix is the rowText recipe version, not a model change — see
+    // ROWTEXT_VERSION. Same for the cloud providers below.
+    id: `local:minilm-l6-v2-q8+${ROWTEXT_VERSION}`,
     dim: 384,
     async init(onProgress) {
       // Extension pages are not cross-origin isolated → no SharedArrayBuffer
@@ -121,7 +124,7 @@ async function inBatches(
 export function createOpenAIProvider({ apiKey }: { apiKey: string }): EmbeddingProvider {
   const model = "text-embedding-3-small"; // cheapest mainstream, strong quality
   return {
-    id: `openai:${model}`,
+    id: `openai:${model}+${ROWTEXT_VERSION}`,
     dim: 1536,
     async init() {},
     embed: (texts) =>
@@ -140,7 +143,7 @@ export function createGeminiProvider({ apiKey }: { apiKey: string }): EmbeddingP
   const model = "gemini-embedding-001";
   const dim = 768;
   return {
-    id: `gemini:${model}-${dim}`,
+    id: `gemini:${model}-${dim}+${ROWTEXT_VERSION}`,
     dim,
     async init() {},
     embed: (texts) =>
@@ -164,7 +167,7 @@ export function createGeminiProvider({ apiKey }: { apiKey: string }): EmbeddingP
 export function createVoyageProvider({ apiKey }: { apiKey: string }): EmbeddingProvider {
   const model = "voyage-3.5-lite";
   return {
-    id: `voyage:${model}`,
+    id: `voyage:${model}+${ROWTEXT_VERSION}`,
     dim: 1024,
     async init() {},
     embed: (texts) =>

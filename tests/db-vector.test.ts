@@ -109,7 +109,7 @@ test("hybridSearch fuses FTS and vector ranks (RRF k=60), FTS rank breaks ties",
     rows: [
       { id: byExt.get("both")!, vector: vec(1, 0) },
       { id: byExt.get("vec-only")!, vector: vec(0.9, Math.sqrt(1 - 0.81)) },
-      { id: byExt.get("fts-only")!, vector: vec(0, 1) }, // below MIN_SIMILARITY vs query
+      { id: byExt.get("fts-only")!, vector: vec(0, 1) }, // below SIM_FLOOR_MIN vs query
     ],
   });
 
@@ -123,19 +123,64 @@ test("hybridSearch fuses FTS and vector ranks (RRF k=60), FTS rank breaks ties",
   db.close();
 });
 
-test("semanticSearch attaches similarity and applies the 0.25 floor", async () => {
+test("hybridSearch vector arm reaches past rank 100 (deep recall, no FTS overlap)", async () => {
   const db = await openDb();
-  const ids = seed(db, "hackernews", [{}, {}]).map((r) => r.id);
+  // 105 decoy rows more similar to the query than the target, none matching
+  // the FTS query — under the old CANDIDATES = 100 cap the target (vector
+  // rank 106) never entered the fusion.
+  const seeded = seed(db, "hackernews", [
+    ...Array.from({ length: 105 }, (_, i) => ({ externalId: `decoy${i}`, title: `filler ${i}` })),
+    { externalId: "target", title: "unrelated words" },
+  ]);
+  const byExt = new Map(seeded.map((r) => [r.external_id, r.id]));
+  const withSim = (s: number) => vec(s, Math.sqrt(1 - s * s));
   storeEmbeddings(db, {
     model: "m",
     rows: [
-      { id: ids[0]!, vector: vec(1, 0) },
-      { id: ids[1]!, vector: vec(0.1, Math.sqrt(1 - 0.01)) }, // sim 0.1 < floor
+      ...Array.from({ length: 105 }, (_, i) => ({
+        id: byExt.get(`decoy${i}`)!,
+        vector: withSim(0.9 - i * 0.001),
+      })),
+      { id: byExt.get("target")!, vector: withSim(0.5) },
+    ],
+  });
+  const items = hybridSearch(db, { query: "coffee", queryVector: vec(1, 0), model: "m" });
+  assert.ok(items.some((r) => r.externalId === "target"));
+  db.close();
+});
+
+test("semanticSearch attaches similarity and applies the query-adaptive floor", async () => {
+  const db = await openDb();
+  const ids = seed(db, "hackernews", [{}, {}, {}]).map((r) => r.id);
+  const withSim = (s: number) => vec(s, Math.sqrt(1 - s * s));
+  storeEmbeddings(db, {
+    model: "m",
+    rows: [
+      { id: ids[0]!, vector: vec(1, 0) }, // sim 1.0 → floor = min(0.35, 0.5·1.0) = 0.35
+      { id: ids[1]!, vector: withSim(0.4) }, // above floor
+      { id: ids[2]!, vector: withSim(0.3) }, // below floor: dropped
     ],
   });
   const items = semanticSearch(db, { queryVector: vec(1, 0), model: "m" });
-  assert.deepEqual(items.map((r) => r.id), [ids[0]]);
+  assert.deepEqual(items.map((r) => r.id), [ids[0], ids[1]]);
   assert.ok(Math.abs(items[0]!.similarity! - 1) < 1e-6);
+  db.close();
+});
+
+test("semanticSearch floor relaxes below the old 0.25 when the top score is weak", async () => {
+  const db = await openDb();
+  const ids = seed(db, "hackernews", [{}, {}, {}]).map((r) => r.id);
+  const withSim = (s: number) => vec(s, Math.sqrt(1 - s * s));
+  storeEmbeddings(db, {
+    model: "m",
+    rows: [
+      { id: ids[0]!, vector: withSim(0.3) }, // top → floor = max(0.2, 0.5·0.3) = 0.2
+      { id: ids[1]!, vector: withSim(0.22) }, // kept: 0.22 ≥ 0.2 (an absolute 0.25 would cut it)
+      { id: ids[2]!, vector: withSim(0.1) }, // below SIM_FLOOR_MIN: dropped
+    ],
+  });
+  const items = semanticSearch(db, { queryVector: vec(1, 0), model: "m" });
+  assert.deepEqual(items.map((r) => r.id), [ids[0], ids[1]]);
   db.close();
 });
 

@@ -26,7 +26,7 @@ export const SCHEMA = `
     published_at  INTEGER,                   -- when the content appeared (epoch ms), often estimated
     created_at    INTEGER NOT NULL,          -- row insert time — the incremental-sync watermark
     embedding     BLOB,                      -- raw little-endian Float32; dim = byteLength / 4
-    embedding_model TEXT,                    -- e.g. 'local:minilm-l6-v2-q8'
+    embedding_model TEXT,                    -- e.g. 'local:minilm-l6-v2-q8+r2' (+rN = rowText recipe version)
     UNIQUE (provider, account, external_id)
   );
 
