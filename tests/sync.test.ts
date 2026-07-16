@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { openDb } from "./helpers/open-db.ts";
 import { asyncDbApi } from "./helpers/async-db.ts";
-import { count } from "../src/core/db/items.ts";
+import { count, setDeleted } from "../src/core/db/items.ts";
 import { ingestPending } from "../src/core/ingest.ts";
 import { createSync } from "../src/core/sync.ts";
 import { ProviderError } from "../src/core/errors.ts";
@@ -109,6 +109,38 @@ test("incremental sync stops at the first page with nothing unseen", async () =>
   const fullRes = await h3.sync.syncProvider("substack", { full: true });
   assert.equal(third.stats.fetched, 2);
   assert.equal(fullRes.updated, 4);
+  db.close();
+});
+
+test("a soft-deleted item survives re-sync: refreshed, not resurrected, stop rule intact", async () => {
+  const db = await openDb();
+  const first = scriptedProvider([pageBody([3, 2], "c1"), pageBody([1], null)]);
+  const h1 = harness(first.provider, db);
+  await h1.sync.syncProvider("substack");
+
+  // The user deletes an item that is still saved on the service.
+  const id = db.rows<{ id: number }>("SELECT id FROM saved_items WHERE title = 'Post 2'")[0]!.id;
+  setDeleted(db, { id, deleted: true });
+  assert.equal(count(db), 2);
+
+  // The next incremental sync re-serves it on the way to the stop page.
+  const second = scriptedProvider([
+    pageBody([4, 3], "c1"),
+    pageBody([2, 1], "c2"),
+    pageBody([0], null), // must never be fetched
+  ]);
+  const h2 = harness(second.provider, db);
+  h2.meta.set("substack", h1.meta.get("substack")!);
+  const res = await h2.sync.syncProvider("substack");
+
+  assert.equal(res.inserted, 1);
+  assert.equal(second.stats.fetched, 2); // deleted row still counts as known — stop rule unchanged
+  assert.equal(count(db), 3); // 4 stored, one still hidden
+  assert.equal(count(db, { deleted: true }), 1);
+  assert.ok(
+    db.rows<{ deleted_at: number | null }>("SELECT deleted_at FROM saved_items WHERE title = 'Post 2'")[0]!
+      .deleted_at
+  );
   db.close();
 });
 

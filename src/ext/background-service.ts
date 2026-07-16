@@ -55,14 +55,17 @@ export interface BackgroundApi {
   /** Every registered provider (disabled included) — the status page and the
    *  options page's enablement toggles. */
   providerStatus(args: Record<string, never>): ProviderStatusRow[];
-  /** provider: null means "across all providers" (the UI's "all" tab). */
-  listItems(args: { provider: ProviderId | null; limit?: number; offset?: number }): {
+  /** provider: null means "across all providers" (the UI's "all" tab);
+   *  deleted: true lists the trash (soft-deleted items) instead. */
+  listItems(args: { provider: ProviderId | null; deleted?: boolean; limit?: number; offset?: number }): {
     items: SavedItem[];
     total: number;
     meta: ProviderMeta | null;
   };
   search(args: { provider: ProviderId | null; query: string; mode?: SearchMode }): SearchResult;
   similar(args: { id: number; provider: ProviderId | null }): SavedItem[];
+  /** Soft-delete (deleted: true) or restore (false) one item. */
+  setItemDeleted(args: { id: number; deleted: boolean }): { changed: number };
   sync(args: { provider: ProviderId; full?: boolean }): SyncReport;
   syncAll(args: { full?: boolean }): AllSyncReport;
   /** Sync-run visibility for surfaces that didn't start the sync. */
@@ -192,9 +195,14 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
       );
     },
 
-    listItems: async ({ provider, limit, offset }) => ({
-      items: await db.list({ provider, ...(limit !== undefined ? { limit } : {}), ...(offset !== undefined ? { offset } : {}) }),
-      total: await db.count({ provider }),
+    listItems: async ({ provider, deleted, limit, offset }) => ({
+      items: await db.list({
+        provider,
+        ...(deleted !== undefined ? { deleted } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(offset !== undefined ? { offset } : {}),
+      }),
+      total: await db.count({ provider, ...(deleted !== undefined ? { deleted } : {}) }),
       meta: provider ? await getMeta(provider) : null,
     }),
 
@@ -207,6 +215,14 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
       ai.search({ provider, query, limit: 500, ...(mode !== undefined ? { mode } : {}) }),
 
     similar: ({ id, provider }) => db.similar({ id, provider }),
+
+    setItemDeleted: ({ id, deleted }) => {
+      // Consistency with the other maintenance ops; a soft delete is actually
+      // race-free against a sync's upserts (deleted_at isn't in its SET list),
+      // but "mutations wait for the sync" is one rule instead of two.
+      rejectDuringSync();
+      return db.setDeleted({ id, deleted });
+    },
 
     sync: ({ provider, full }) =>
       runSync(provider, async (stop) => sync.syncProvider(provider, { ...(await syncOptions(full)), stop })),

@@ -30,6 +30,7 @@ export const ITEM_COLUMNS = [
   "bookmarked_at AS bookmarkedAt",
   "published_at AS publishedAt",
   "created_at AS createdAt",
+  "deleted_at AS deletedAt",
 ].join(", ");
 
 // Same projection qualified with the saved_items alias, for the FTS join
@@ -103,6 +104,9 @@ export function upsert(db: SqlDatabase, { provider, account, items }: UpsertArgs
     INSERT INTO saved_items
       (provider, account, external_id, url, title, publication, summary, image, kind, duration, collection, poster_name, poster_handle, poster_bio, stats, bookmarked_at, published_at, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    -- deleted_at is deliberately absent from this SET list: a user-deleted
+    -- item that is still saved on the service flows back through upsert on
+    -- every incremental sync, and refreshing its fields must not undelete it.
     ON CONFLICT (provider, account, external_id) DO UPDATE SET
       url = excluded.url,
       title = excluded.title,
@@ -197,11 +201,16 @@ export function knownIds(
 export interface ListArgs {
   /** null/absent means "across all providers" (the UI's "all"). */
   provider?: ProviderId | null;
+  /** true lists the trash (soft-deleted rows) instead of live items. */
+  deleted?: boolean;
   limit?: number;
   offset?: number;
 }
 
-export function list(db: SqlDatabase, { provider, limit = 1000, offset = 0 }: ListArgs): SavedItem[] {
+export function list(
+  db: SqlDatabase,
+  { provider, deleted = false, limit = 1000, offset = 0 }: ListArgs
+): SavedItem[] {
   // bookmarked_at DESC sorts providers that expose a true save timestamp
   // newest-first; published_at is the content-time fallback. Rows with
   // neither timestamp fall through to created_at DESC (newer syncs first)
@@ -210,10 +219,21 @@ export function list(db: SqlDatabase, { provider, limit = 1000, offset = 0 }: Li
   // paging is stable.
   return fetchItems(
     db,
-    `SELECT ${ITEM_COLUMNS} FROM saved_items ${provider ? "WHERE provider = ?" : ""}
+    `SELECT ${ITEM_COLUMNS} FROM saved_items
+     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"} ${provider ? "AND provider = ?" : ""}
      ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ? OFFSET ?`,
     provider ? [provider, limit, offset] : [limit, offset]
   );
+}
+
+/** Soft-delete (or restore) one item. The row and its embedding stay put —
+ *  every user-facing read path filters on deleted_at instead. */
+export function setDeleted(
+  db: SqlDatabase,
+  { id, deleted }: { id: number; deleted: boolean }
+): { changed: number } {
+  db.run("UPDATE saved_items SET deleted_at = ? WHERE id = ?", [deleted ? Date.now() : null, id]);
+  return { changed: db.rows<{ n: number }>("SELECT changes() AS n", [])[0]!.n };
 }
 
 export interface SearchArgs {
@@ -228,9 +248,11 @@ export function search(db: SqlDatabase, { provider, query, limit = 200 }: Search
   try {
     return fetchItems(
       db,
+      // Deleted rows are still in the FTS index (the update trigger re-adds
+      // them), so live-ness is filtered on the joined saved_items row.
       `SELECT ${ITEM_COLUMNS_S} FROM saved_items_fts f
        JOIN saved_items s ON s.id = f.rowid
-       WHERE saved_items_fts MATCH ? ${provider ? "AND s.provider = ?" : ""}
+       WHERE saved_items_fts MATCH ? AND s.deleted_at IS NULL ${provider ? "AND s.provider = ?" : ""}
        ORDER BY rank LIMIT ?`,
       provider ? [match, provider, limit] : [match, limit]
     );
@@ -240,7 +262,7 @@ export function search(db: SqlDatabase, { provider, query, limit = 200 }: Search
     return fetchItems(
       db,
       `SELECT ${ITEM_COLUMNS} FROM saved_items
-       WHERE ${provider ? "provider = ? AND" : ""}
+       WHERE deleted_at IS NULL AND ${provider ? "provider = ? AND" : ""}
          (title LIKE ? OR publication LIKE ? OR summary LIKE ? OR collection LIKE ? OR poster_name LIKE ? OR poster_handle LIKE ?)
        ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ?`,
       provider
@@ -263,25 +285,34 @@ export function providerStats(db: SqlDatabase): ProviderStatsRow[] {
   return db.rows<ProviderStatsRow>(
     `SELECT provider, COUNT(*) AS items,
             MAX(COALESCE(bookmarked_at, published_at)) AS lastItemAt
-     FROM saved_items GROUP BY provider`,
+     FROM saved_items WHERE deleted_at IS NULL GROUP BY provider`,
     []
   );
 }
 
-export function count(db: SqlDatabase, { provider }: { provider?: ProviderId | null } = {}): number {
+export function count(
+  db: SqlDatabase,
+  { provider, deleted = false }: { provider?: ProviderId | null; deleted?: boolean } = {}
+): number {
   return db.rows<{ n: number }>(
-    `SELECT COUNT(*) AS n FROM saved_items ${provider ? "WHERE provider = ?" : ""}`,
+    `SELECT COUNT(*) AS n FROM saved_items
+     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"} ${provider ? "AND provider = ?" : ""}`,
     provider ? [provider] : []
   )[0]!.n;
 }
 
-/** Drop items (all, or one provider). The FTS triggers keep the index in
- *  sync per deleted row; embeddings go with the rows. raw_data is untouched. */
+/** Drop items (all, or one provider) — soft-deleted rows included. The FTS
+ *  triggers keep the index in sync per deleted row; embeddings go with the
+ *  rows. raw_data is untouched. */
 export function clearItems(
   db: SqlDatabase,
   { provider }: { provider?: ProviderId | null } = {}
 ): { deleted: number } {
-  const deleted = count(db, { provider: provider ?? null });
+  // Not count(): that now means "live rows", and this DELETE takes trash too.
+  const deleted = db.rows<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM saved_items ${provider ? "WHERE provider = ?" : ""}`,
+    provider ? [provider] : []
+  )[0]!.n;
   db.run(`DELETE FROM saved_items ${provider ? "WHERE provider = ?" : ""}`, provider ? [provider] : []);
   return { deleted };
 }

@@ -16,7 +16,8 @@ export interface DbApi {
   upsert(args: items.UpsertArgs): { inserted: number; updated: number };
   list(args: items.ListArgs): SavedItem[];
   search(args: items.SearchArgs): SavedItem[];
-  count(args: { provider?: ProviderId | null }): number;
+  setDeleted(args: { id: number; deleted: boolean }): { changed: number };
+  count(args: { provider?: ProviderId | null; deleted?: boolean }): number;
   providerStats(args: Record<string, never>): items.ProviderStatsRow[];
   clearItems(args: { provider?: ProviderId | null }): { deleted: number };
 
@@ -59,6 +60,7 @@ export function createDbService(db: SqlDatabase): DbApi {
     upsert: (args) => items.upsert(db, args),
     list: (args) => items.list(db, args),
     search: (args) => items.search(db, args),
+    setDeleted: (args) => items.setDeleted(db, args),
     count: (args) => items.count(db, args),
     providerStats: () => items.providerStats(db),
     clearItems: (args) => items.clearItems(db, args),

@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { openDb } from "./helpers/open-db.ts";
-import { upsert, list, search, count, clearItems, knownIds } from "../src/core/db/items.ts";
+import { upsert, list, search, count, clearItems, knownIds, setDeleted } from "../src/core/db/items.ts";
+import { initSchema } from "../src/core/db/schema.ts";
 import { storeEmbeddings } from "../src/core/db/embeddings.ts";
 import { ftsQuery } from "../src/core/fts.ts";
 import type { ParsedItem } from "../src/core/types.ts";
@@ -262,6 +263,85 @@ test("count scopes by provider or spans all", async () => {
   assert.equal(count(db, { provider: "hackernews" }), 2);
   assert.equal(count(db, {}), 3);
   assert.equal(count(db), 3);
+  db.close();
+});
+
+test("setDeleted hides an item from list/search/count; the trash lists it; restore reverses", async () => {
+  const db = await openDb();
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [item("a", { title: 'hidden "unbalanced gem' }), item("b")],
+  });
+  const id = db.rows<{ id: number }>("SELECT id FROM saved_items WHERE external_id = 'a'")[0]!.id;
+
+  assert.deepEqual(setDeleted(db, { id, deleted: true }), { changed: 1 });
+  assert.deepEqual(list(db, {}).map((r) => r.externalId), ["b"]);
+  assert.equal(count(db, {}), 1);
+  // FTS arm: the row is still in the FTS index (the update trigger re-added
+  // it), so the filter on the joined saved_items row must catch it.
+  assert.equal(search(db, { query: "hidden" }).length, 0);
+  // LIKE fallback arm (unterminated quote breaks FTS5) filters too.
+  assert.equal(search(db, { query: '"unbalanced' }).length, 0);
+
+  const trash = list(db, { deleted: true });
+  assert.deepEqual(trash.map((r) => r.externalId), ["a"]);
+  assert.ok(trash[0]!.deletedAt! > 0);
+  assert.equal(count(db, { deleted: true }), 1);
+  // The deleted item stays known — sync's stop rule must not re-fetch it as new.
+  assert.deepEqual(knownIds(db, { provider: "hackernews" }).sort(), ["a", "b"]);
+
+  assert.deepEqual(setDeleted(db, { id, deleted: false }), { changed: 1 });
+  assert.equal(count(db, {}), 2);
+  assert.equal(list(db, { deleted: true }).length, 0);
+  assert.equal(search(db, { query: "hidden" }).length, 1);
+  assert.equal(list(db, {})[1]!.deletedAt, null);
+
+  assert.deepEqual(setDeleted(db, { id: 999999, deleted: true }), { changed: 0 });
+  db.close();
+});
+
+test("upsert refreshes a deleted item's fields without resurrecting it", async () => {
+  const db = await openDb();
+  upsert(db, { provider: "substack", account: "u", items: [item("a")] });
+  const id = db.rows<{ id: number }>("SELECT id FROM saved_items")[0]!.id;
+  setDeleted(db, { id, deleted: true });
+  const before = db.rows<{ deleted_at: number }>("SELECT deleted_at FROM saved_items")[0]!.deleted_at;
+
+  // The item is still saved on the service: every incremental sync re-upserts it.
+  upsert(db, { provider: "substack", account: "u", items: [item("a", { title: "refreshed" })] });
+  const row = db.rows<{ title: string; deleted_at: number | null }>(
+    "SELECT title, deleted_at FROM saved_items"
+  )[0]!;
+  assert.equal(row.title, "refreshed");
+  assert.equal(row.deleted_at, before); // deleted_at untouched by the SET list
+  assert.equal(count(db, {}), 0);
+  db.close();
+});
+
+test("initSchema adds deleted_at to a DB created before the column existed, idempotently", async () => {
+  const db = await openDb();
+  const hasColumn = () =>
+    db.rows<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM pragma_table_info('saved_items') WHERE name = 'deleted_at'"
+    )[0]!.n;
+  // Simulate a pre-column OPFS DB (nothing else references the column).
+  db.exec("ALTER TABLE saved_items DROP COLUMN deleted_at");
+  assert.equal(hasColumn(), 0);
+  initSchema(db);
+  assert.equal(hasColumn(), 1);
+  initSchema(db); // re-init on an up-to-date DB is a no-op
+  assert.equal(hasColumn(), 1);
+  db.close();
+});
+
+test("clearItems counts soft-deleted rows in its return and removes them", async () => {
+  const db = await openDb();
+  upsert(db, { provider: "hackernews", account: "u", items: [item("1"), item("2")] });
+  const id = db.rows<{ id: number }>("SELECT id FROM saved_items WHERE external_id = '1'")[0]!.id;
+  setDeleted(db, { id, deleted: true });
+  assert.deepEqual(clearItems(db), { deleted: 2 }); // live count alone would say 1
+  assert.equal(count(db, { deleted: true }), 0);
   db.close();
 });
 

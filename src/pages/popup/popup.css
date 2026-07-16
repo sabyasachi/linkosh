@@ -151,8 +151,11 @@ li.item a:hover {
   background: var(--hover);
 }
 
-/* "More like this": sibling of the <a> so clicks don't navigate. */
-button.similar {
+/* Per-row actions ("more like this", delete, restore): siblings of the <a>
+   so clicks don't navigate. */
+button.similar,
+button.delete,
+button.restore {
   flex: none;
   margin-right: 10px;
   padding: 2px 8px;
@@ -162,8 +165,17 @@ button.similar {
   font-size: 15px;
 }
 
-button.similar:hover {
+button.similar:hover,
+button.restore:hover {
   color: var(--accent);
+}
+
+button.delete {
+  font-size: 12px; /* the ✕ glyph renders larger than ≈ at equal size */
+}
+
+button.delete:hover {
+  color: #c62828;
 }
 
 /* Small ✕ appended to the status line while showing similar items. */
@@ -178,6 +190,57 @@ button.reset-similar {
 
 button.reset-similar:hover {
   color: var(--fg);
+}
+
+/* Transient Undo appended to the status line right after a delete. */
+button.undo {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+button.undo:hover {
+  text-decoration: underline;
+}
+
+/* Header toggle for the Deleted view — unmistakably "on" while the trash is
+   showing (a tinted icon alone read as decoration, not state). */
+button#trash[aria-pressed="true"] {
+  color: #fff;
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Persistent banner while the trash is open: names the view and carries the
+   explicit way out (the header toggle still works too). */
+#trash-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+#trash-banner button {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  color: var(--accent);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+#trash-banner button:hover {
+  text-decoration: underline;
 }
 
 /* Infinite-scroll trigger: needs height to intersect, must not look like an item. */

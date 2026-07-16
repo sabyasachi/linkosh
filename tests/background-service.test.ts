@@ -200,6 +200,36 @@ test("maintenance ops are rejected while a sync runs, allowed after", async () =
   db.close();
 });
 
+test("setItemDeleted soft-deletes and restores through listItems; rejected mid-sync", async () => {
+  const { provider, gate, landed } = gatedProvider();
+  const { db, svc } = await makeService(provider);
+
+  const run = svc.sync({ provider: "substack" });
+  await landed.promise;
+  await assert.rejects(async () => svc.setItemDeleted({ id: 1, deleted: true }), /sync is running/);
+  gate.resolve();
+  await run;
+
+  const before = await svc.listItems({ provider: null });
+  assert.equal(before.total, 2);
+  const target = before.items[0]!;
+
+  assert.deepEqual(await svc.setItemDeleted({ id: target.id, deleted: true }), { changed: 1 });
+  const after = await svc.listItems({ provider: null });
+  assert.equal(after.total, 1);
+  assert.ok(!after.items.some((i) => i.id === target.id));
+
+  const trash = await svc.listItems({ provider: null, deleted: true });
+  assert.equal(trash.total, 1);
+  assert.equal(trash.items[0]!.id, target.id);
+  assert.ok(trash.items[0]!.deletedAt! > 0);
+
+  assert.deepEqual(await svc.setItemDeleted({ id: target.id, deleted: false }), { changed: 1 });
+  assert.equal((await svc.listItems({ provider: null })).total, 2);
+  assert.equal((await svc.listItems({ provider: null, deleted: true })).total, 0);
+  db.close();
+});
+
 /** An instantly-completing one-page provider (no gate), optionally with a
  *  login probe, for the enablement/status tests. */
 function instantProvider(id: "substack" | "hackernews", loggedIn?: boolean): Provider {

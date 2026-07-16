@@ -20,6 +20,9 @@ interface Status {
   error?: boolean;
   /** Shows the ✕ back-to-list control after "more like this". */
   similar?: boolean;
+  /** Shows an Undo control after a delete — the id to restore. Transient:
+   *  replaced by the next status write; the Deleted view is the durable path. */
+  undo?: number;
 }
 
 function errorText(e: unknown): string {
@@ -48,10 +51,15 @@ function ItemRow({
   item,
   providerLabel,
   onSimilar,
+  onDelete,
+  onRestore,
 }: {
   item: SavedItem;
   providerLabel: string;
-  onSimilar: (item: SavedItem) => void;
+  /** Absent in the Deleted view — "more like this" on a hidden item is confusing. */
+  onSimilar?: ((item: SavedItem) => void) | undefined;
+  onDelete?: ((item: SavedItem) => void) | undefined;
+  onRestore?: ((item: SavedItem) => void) | undefined;
 }) {
   const poster = formatPoster(item);
   const summary = hackerNewsCounts(item) ? "" : item.summary;
@@ -94,10 +102,22 @@ function ItemRow({
           {meta && <div class="meta">{meta}</div>}
         </div>
       </a>
-      {/* Sibling of the <a>, not a child, so clicking it doesn't navigate. */}
-      <button class="similar" title="More like this" onClick={() => onSimilar(item)}>
-        ≈
-      </button>
+      {/* Siblings of the <a>, not children, so clicking them doesn't navigate. */}
+      {onSimilar && (
+        <button class="similar" title="More like this" onClick={() => onSimilar(item)}>
+          ≈
+        </button>
+      )}
+      {onDelete && (
+        <button class="delete" title="Delete" onClick={() => onDelete(item)}>
+          ✕
+        </button>
+      )}
+      {onRestore && (
+        <button class="restore" title="Restore" onClick={() => onRestore(item)}>
+          ↩
+        </button>
+      )}
     </li>
   );
 }
@@ -116,6 +136,7 @@ export function App({ runtime }: { runtime: Runtime }) {
   const [syncing, setSyncing] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [showSearchRow, setShowSearchRow] = useState(false);
+  const [trash, setTrash] = useState(false);
 
   const providerLabels = useMemo(() => new Map(providers.map((p) => [p.id, p.label])), [providers]);
 
@@ -132,7 +153,11 @@ export function App({ runtime }: { runtime: Runtime }) {
   // Which feature owns the item list right now. Background view-writers (the
   // sync progress poll, the post-sync refresh) may only touch a "list" view —
   // a search or "more like this" started mid-sync must not be clobbered.
-  const viewRef = useRef<"list" | "search" | "similar">("list");
+  const viewRef = useRef<"list" | "search" | "similar" | "deleted">("list");
+  // Mirrors the `trash` state for callbacks with stale closures (loadItems is
+  // captured by init/refresh paths created before the toggle flipped).
+  const trashRef = useRef(false);
+  trashRef.current = trash;
   // Current query/mode for callbacks created before the latest keystroke
   // (the post-sync search restore).
   const queryRef = useRef("");
@@ -141,23 +166,32 @@ export function App({ runtime }: { runtime: Runtime }) {
   searchModeRef.current = searchMode;
   const stoppingRef = useRef(false);
   stoppingRef.current = stopping;
+  // refreshView is defined below in the sync section; the delete callbacks
+  // above it reach the latest version through this ref.
+  const refreshViewRef = useRef<() => Promise<void>>(async () => {});
 
-  const listStatus = useCallback((total: number, lastMeta: ProviderMeta | null) => {
+  const listStatus = useCallback((total: number, lastMeta: ProviderMeta | null, deleted: boolean) => {
     // meta is null in the All view (each provider has its own sync time).
     setStatus({
-      text: total
-        ? `${total} saved items${lastMeta ? ` · ${formatSynced(lastMeta.syncedAt)}` : ""}`
-        : "No items yet — press Sync to fetch your saved items.",
+      text: deleted
+        ? total
+          ? `${total} deleted items`
+          : "No deleted items."
+        : total
+          ? `${total} saved items${lastMeta ? ` · ${formatSynced(lastMeta.syncedAt)}` : ""}`
+          : "No items yet — press Sync to fetch your saved items.",
     });
   }, []);
 
   const loadItems = useCallback(
     async (providerChoice: ProviderChoice = providerRef.current) => {
-      viewRef.current = "list";
+      const deleted = trashRef.current;
+      viewRef.current = deleted ? "deleted" : "list";
       const gen = ++generationRef.current;
       try {
         const res = await api.listItems({
           provider: providerChoice === ALL ? null : providerChoice,
+          deleted,
           limit: PAGE_SIZE,
           offset: 0,
         });
@@ -167,8 +201,9 @@ export function App({ runtime }: { runtime: Runtime }) {
         setItems(res.items);
         setMeta(res.meta);
         setHasMore(res.items.length < res.total);
-        setShowSearchRow(res.total > 0);
-        listStatus(res.total, res.meta);
+        // Search covers live items only — the Deleted view hides the bar.
+        setShowSearchRow(!deleted && res.total > 0);
+        listStatus(res.total, res.meta, deleted);
       } catch (e) {
         if (gen !== generationRef.current) return;
         setStatus({ text: errorText(e), error: true });
@@ -184,6 +219,7 @@ export function App({ runtime }: { runtime: Runtime }) {
     try {
       const res = await api.listItems({
         provider: providerRef.current === ALL ? null : providerRef.current,
+        deleted: viewRef.current === "deleted",
         limit: PAGE_SIZE,
         offset: offsetRef.current,
       });
@@ -354,6 +390,76 @@ export function App({ runtime }: { runtime: Runtime }) {
     [api]
   );
 
+  // ---------- delete / restore ----------
+
+  // Optimistic removal from whatever view is showing. In paged views the
+  // offset/total refs shift down with the row so infinite scroll stays
+  // aligned; the generation is NOT bumped — this is a mutation, not a view
+  // change, and an in-flight page appending afterwards is harmless.
+  const dropRow = useCallback((id: number) => {
+    setItems((prev) => prev.filter((i) => i.id !== id));
+    if (viewRef.current === "list" || viewRef.current === "deleted") {
+      offsetRef.current = Math.max(0, offsetRef.current - 1);
+      totalRef.current = Math.max(0, totalRef.current - 1);
+    }
+  }, []);
+
+  const deleteItem = useCallback(
+    async (item: SavedItem) => {
+      try {
+        await api.setItemDeleted({ id: item.id, deleted: true });
+      } catch (e) {
+        setStatus({ text: errorText(e), error: true });
+        return;
+      }
+      dropRow(item.id);
+      setStatus({
+        text: `Deleted “${(item.title || formatPoster(item) || item.url || "").slice(0, 60)}”`,
+        undo: item.id,
+        similar: viewRef.current === "similar",
+      });
+    },
+    [api, dropRow]
+  );
+
+  const undoDelete = useCallback(
+    async (id: number) => {
+      try {
+        await api.setItemDeleted({ id, deleted: false });
+      } catch (e) {
+        setStatus({ text: errorText(e), error: true });
+        return;
+      }
+      // list/search views refresh (the row reappears in place); a similar
+      // view keeps its results — the restored item just stays hidden there.
+      if (viewRef.current === "similar") setStatus({ text: "Item restored", similar: true });
+      else await refreshViewRef.current();
+    },
+    [api]
+  );
+
+  const restoreItem = useCallback(
+    async (item: SavedItem) => {
+      try {
+        await api.setItemDeleted({ id: item.id, deleted: false });
+      } catch (e) {
+        setStatus({ text: errorText(e), error: true });
+        return;
+      }
+      dropRow(item.id);
+      listStatus(totalRef.current, null, true);
+    },
+    [api, dropRow, listStatus]
+  );
+
+  const toggleTrash = useCallback(() => {
+    const next = !trashRef.current;
+    trashRef.current = next;
+    setTrash(next);
+    setQuery(""); // search is live-only; entering/leaving the trash resets it
+    void loadItems();
+  }, [loadItems]);
+
   // ---------- sync ----------
 
   // Pages are saved to the DB as a sync fetches them, so re-render the list
@@ -393,10 +499,11 @@ export function App({ runtime }: { runtime: Runtime }) {
   const refreshView = useCallback(async () => {
     if (viewRef.current === "search" && queryRef.current.trim()) {
       await runSearch(queryRef.current, searchModeRef.current);
-    } else if (viewRef.current === "list") {
+    } else if (viewRef.current === "list" || viewRef.current === "deleted") {
       await loadItems();
     }
   }, [loadItems, runSearch]);
+  refreshViewRef.current = refreshView;
 
   const doSync = useCallback(
     async () => {
@@ -520,6 +627,15 @@ export function App({ runtime }: { runtime: Runtime }) {
           >
             {stopping ? "Stopping…" : syncing ? "Stop" : "Sync"}
           </button>
+          <button
+            id="trash"
+            class="icon-button"
+            title={trash ? "Back to saved items" : "Deleted items"}
+            aria-pressed={trash}
+            onClick={toggleTrash}
+          >
+            🗑
+          </button>
           {runtime.openPage && (
             <button id="expand" title="Open as a full page" onClick={runtime.openPage}>
               ⛶
@@ -538,6 +654,15 @@ export function App({ runtime }: { runtime: Runtime }) {
           )}
         </div>
       </header>
+
+      {/* Persistent while the trash is open — the header toggle alone is too
+          subtle a cue for which view is showing (and how to leave it). */}
+      {trash && (
+        <div id="trash-banner">
+          <span>Viewing deleted items</span>
+          <button onClick={toggleTrash}>✕ Back to saved items</button>
+        </div>
+      )}
 
       <div id="search-row" hidden={!showSearchRow}>
         <input
@@ -571,6 +696,11 @@ export function App({ runtime }: { runtime: Runtime }) {
 
       <div id="status" class={status.error ? "error" : ""}>
         {status.text}
+        {status.undo !== undefined && (
+          <button class="undo" title="Restore the deleted item" onClick={() => void undoDelete(status.undo!)}>
+            Undo
+          </button>
+        )}
         {status.similar && (
           <button class="reset-similar" title="Back to the list" onClick={() => void loadItems()}>
             ✕
@@ -584,7 +714,9 @@ export function App({ runtime }: { runtime: Runtime }) {
             key={`${item.provider}:${item.id}`}
             item={item}
             providerLabel={provider === ALL ? providerLabels.get(item.provider) || item.provider : ""}
-            onSimilar={(it) => void showSimilar(it)}
+            onSimilar={trash ? undefined : (it) => void showSimilar(it)}
+            onDelete={trash ? undefined : (it) => void deleteItem(it)}
+            onRestore={trash ? (it) => void restoreItem(it) : undefined}
           />
         ))}
         {hasMore && <li class="sentinel" ref={sentinelRef} />}
