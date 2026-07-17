@@ -41,10 +41,8 @@ Linkosh is designed to work without a Linkosh account or server.
 - Your library is stored in your browser, in a local SQLite database.
 - Linkosh uses the sessions you already have open in Chrome. It does not ask
   for or store your passwords.
-- Search embeddings are generated on your device by default. The model is
-  downloaded once (about 34 MB) and then cached.
-- Nothing is sent to an AI API unless you explicitly choose a cloud embedding
-  provider and add your own API key in Options.
+- Search embeddings are generated on your device. The model is downloaded once
+  (about 34 MB) and then cached. Nothing is sent to any AI API.
 - Raw responses from supported services are not archived unless you turn on
   the developer-only Capture mode.
 
@@ -273,8 +271,6 @@ Please treat Linkosh as experimental software.
   post links continue to work.
 - YouTube identifies Shorts from playlist metadata. Older Shorts without the
   expected badge or URL may appear as regular videos.
-- Cloud embedding API keys are stored by Chrome in `chrome.storage.local` and
-  are plaintext on the local disk. Use a restricted, revocable key.
 - During the local model's first download, or while embeddings are being
   rebuilt, semantic search quietly falls back to text search. Options shows
   the remaining backlog.
@@ -382,8 +378,8 @@ Text search uses a single FTS query builder shared by every runtime. Hybrid
 search combines FTS5 rank with cosine similarity through reciprocal-rank
 fusion. Semantic search and “more like this” use a quantized
 `bge-small-en-v1.5` model through Transformers.js in a separate worker, so an
-ONNX Runtime failure cannot take down SQLite. OpenAI, Gemini, and Voyage are
-optional embedding adapters; local inference remains the default.
+ONNX Runtime failure cannot take down SQLite. All inference is on-device; the
+embedding-provider seam is where cloud adapters could plug in later.
 
 ### A build with no bundler
 

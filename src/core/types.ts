@@ -277,11 +277,13 @@ export interface SearchResult {
   requested: SearchMode;
 }
 
-export type EmbedProviderId = "local" | "openai" | "gemini" | "voyage";
+/** Only on-device embedding exists today. Cloud providers (removed 2026-07,
+ *  see git history) rejoin this union — and put their API keys back into
+ *  AiSettings — when reintroduced. */
+export type EmbedProviderId = "local";
 
 export interface AiSettings {
   embedProvider: EmbedProviderId;
-  keys: Partial<Record<"openai" | "gemini" | "voyage" | "anthropic", string>>;
 }
 
 export interface DownloadProgress {

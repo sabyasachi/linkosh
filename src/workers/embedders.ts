@@ -1,11 +1,11 @@
-// Embedding providers. One local (transformers.js, fully on-device) and a few
-// cloud APIs unlocked by an API key on the options page. Every provider
-// returns L2-normalized Float32Array vectors so cosine similarity == dot
-// product everywhere downstream (core/db/search.ts relies on this).
-//
-// Note: Anthropic has no embeddings API — the Anthropic key on the options
-// page exists only for the auto-tagging plan's tag labeling, not for this
-// file.
+// Embedding providers. Currently one: local transformers.js, fully on-device.
+// The EmbeddingProvider interface + resolveProvider(settings) seam is where
+// cloud providers (OpenAI/Gemini/Voyage, removed 2026-07 — see git history)
+// plug back in: implement the interface, branch on settings.embedProvider
+// here, and re-add the options-page key fields + manifest
+// optional_host_permissions. Every provider must return L2-normalized
+// Float32Array vectors so cosine similarity == dot product everywhere
+// downstream (core/db/search.ts relies on this).
 import { pipeline, env, type FeatureExtractionPipeline } from "../vendor/transformers.min.js";
 import type { AiSettings, DownloadProgress } from "../core/types.ts";
 import type { EmbedKind } from "../core/ai/api.ts";
@@ -16,7 +16,7 @@ export interface EmbeddingProvider {
   dim: number;
   init(onProgress?: (p: DownloadProgress) => void): Promise<void>;
   /** `kind` matters only to retrieval-trained models (bge prefixes queries);
-   *  symmetric/cloud providers ignore it. */
+   *  symmetric providers ignore it. */
   embed(texts: string[], kind?: EmbedKind): Promise<Float32Array[]>;
 }
 
@@ -71,7 +71,7 @@ export function createLocalProvider(): EmbeddingProvider {
   let extractor: FeatureExtractionPipeline | null = null;
   return {
     // The +rN suffix is the rowText recipe version, not a model change — see
-    // ROWTEXT_VERSION. Same for the cloud providers below.
+    // ROWTEXT_VERSION.
     id: `local:bge-small-en-v1.5-q8+${ROWTEXT_VERSION}`,
     dim: 384,
     async init(onProgress) {
@@ -96,110 +96,10 @@ export function createLocalProvider(): EmbeddingProvider {
   };
 }
 
-/** Cloud vectors are normalized client-side; some APIs (OpenAI) already
- *  normalize, but doing it unconditionally keeps the invariant local. */
-function normalize(vector: Float32Array): Float32Array {
-  let sum = 0;
-  for (const x of vector) sum += x * x;
-  const norm = Math.sqrt(sum) || 1;
-  const out = new Float32Array(vector.length);
-  for (let i = 0; i < vector.length; i++) out[i] = vector[i]! / norm;
-  return out;
-}
-
-async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Embedding API ${res.status}: ${text.slice(0, 300)}`);
-  }
-  return res.json();
-}
-
-/** Run `texts` through `request(batch)` in slices of `size`, concatenating. */
-async function inBatches(
-  texts: string[],
-  size: number,
-  request: (batch: string[]) => Promise<Float32Array[]>
-): Promise<Float32Array[]> {
-  const vectors: Float32Array[] = [];
-  for (let i = 0; i < texts.length; i += size) {
-    vectors.push(...(await request(texts.slice(i, i + size))));
-  }
-  return vectors;
-}
-
-export function createOpenAIProvider({ apiKey }: { apiKey: string }): EmbeddingProvider {
-  const model = "text-embedding-3-small"; // cheapest mainstream, strong quality
-  return {
-    id: `openai:${model}+${ROWTEXT_VERSION}`,
-    dim: 1536,
-    async init() {},
-    embed: (texts) =>
-      inBatches(texts, 100, async (batch) => {
-        const res = (await postJson(
-          "https://api.openai.com/v1/embeddings",
-          { Authorization: `Bearer ${apiKey}` },
-          { model, input: batch }
-        )) as { data: { embedding: number[] }[] };
-        return res.data.map((d) => normalize(Float32Array.from(d.embedding)));
-      }),
-  };
-}
-
-export function createGeminiProvider({ apiKey }: { apiKey: string }): EmbeddingProvider {
-  const model = "gemini-embedding-001";
-  const dim = 768;
-  return {
-    id: `gemini:${model}-${dim}+${ROWTEXT_VERSION}`,
-    dim,
-    async init() {},
-    embed: (texts) =>
-      inBatches(texts, 100, async (batch) => {
-        const res = (await postJson(
-          `https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`,
-          { "x-goog-api-key": apiKey },
-          {
-            requests: batch.map((text) => ({
-              model: `models/${model}`,
-              content: { parts: [{ text }] },
-              output_dimensionality: dim,
-            })),
-          }
-        )) as { embeddings: { values: number[] }[] };
-        return res.embeddings.map((e) => normalize(Float32Array.from(e.values)));
-      }),
-  };
-}
-
-export function createVoyageProvider({ apiKey }: { apiKey: string }): EmbeddingProvider {
-  const model = "voyage-3.5-lite";
-  return {
-    id: `voyage:${model}+${ROWTEXT_VERSION}`,
-    dim: 1024,
-    async init() {},
-    embed: (texts) =>
-      inBatches(texts, 100, async (batch) => {
-        const res = (await postJson(
-          "https://api.voyageai.com/v1/embeddings",
-          { Authorization: `Bearer ${apiKey}` },
-          { model, input: batch }
-        )) as { data: { embedding: number[] }[] };
-        return res.data.map((d) => normalize(Float32Array.from(d.embedding)));
-      }),
-  };
-}
-
-/** Pick the provider from ai:settings ({ embedProvider, keys }): cloud when a
- *  key exists for the selected provider, local otherwise (and by default). */
+/** Pick the provider from ai:settings. Only "local" exists today, so any
+ *  stored value (including settings written before the cloud providers were
+ *  removed) resolves to the local model. */
 export function resolveProvider(settings: AiSettings | null): EmbeddingProvider {
-  const { embedProvider, keys = {} } = settings ?? {};
-  if (embedProvider === "openai" && keys.openai) return createOpenAIProvider({ apiKey: keys.openai });
-  if (embedProvider === "gemini" && keys.gemini) return createGeminiProvider({ apiKey: keys.gemini });
-  if (embedProvider === "voyage" && keys.voyage) return createVoyageProvider({ apiKey: keys.voyage });
+  void settings;
   return createLocalProvider();
 }
