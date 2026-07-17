@@ -28,6 +28,7 @@ export const SCHEMA = `
     deleted_at    INTEGER,                   -- soft delete (epoch ms); NULL = live. Soft, not DELETE:
                                              -- the row must stay in knownIds or the next sync would
                                              -- treat it as unseen and resurrect it
+    starred_at    INTEGER,                   -- user favorite (epoch ms); NULL = not starred
     embedding     BLOB,                      -- raw little-endian Float32; dim = byteLength / 4
     embedding_model TEXT,                    -- e.g. 'local:minilm-l6-v2-q8+r2' (+rN = rowText recipe version)
     UNIQUE (provider, account, external_id)
@@ -93,10 +94,12 @@ export const FTS_SCHEMA = `
  *  migration story. */
 export function initSchema(db: SqlDatabase): void {
   db.exec(SCHEMA);
-  const hasDeletedAt = db.rows<{ n: number }>(
-    "SELECT COUNT(*) AS n FROM pragma_table_info('saved_items') WHERE name = 'deleted_at'",
-    []
-  )[0]!.n;
-  if (!hasDeletedAt) db.exec("ALTER TABLE saved_items ADD COLUMN deleted_at INTEGER");
+  for (const column of ["deleted_at", "starred_at"]) {
+    const present = db.rows<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM pragma_table_info('saved_items') WHERE name = ?",
+      [column]
+    )[0]!.n;
+    if (!present) db.exec(`ALTER TABLE saved_items ADD COLUMN ${column} INTEGER`);
+  }
   db.exec(FTS_SCHEMA);
 }

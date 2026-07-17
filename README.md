@@ -9,6 +9,7 @@ Use it to:
 - browse saved items from several services in one place;
 - search by words, filters, or meaning;
 - find items similar to something you already saved;
+- star favorites and prune items you no longer want, with undo;
 - keep an archive even after you unsave the original; and
 - export the complete library as a SQLite database.
 
@@ -18,6 +19,20 @@ occasionally need maintenance as websites change their private APIs. If you
 are comfortable trying a developer build, feedback and bug reports are very
 welcome. Code contributions are not being accepted at the moment — see
 [Contributing](#contributing).
+
+## Screenshots
+
+Browse saved items from every supported service in one library.
+
+![Linkosh library showing saved items from several services](docs/screenshots/library-overview.jpg)
+
+| Search by meaning | Filter with precise queries |
+| --- | --- |
+| ![Hybrid search results for writing](docs/screenshots/hybrid-search.jpg) | ![Text search filtered to the Watch Later collection](docs/screenshots/collection-filter.jpg) |
+
+Star favorites and return to them in one click.
+
+![Starred view listing only starred items](docs/screenshots/starred-view.jpg)
 
 ## Privacy at a glance
 
@@ -50,7 +65,8 @@ limitations](#security-and-limitations) before installing.
 | Substack | Saved posts, podcasts, and notes |
 
 Linkosh keeps imported items as an archive. Removing an item on the original
-service does not delete the copy in Linkosh.
+service does not delete the copy in Linkosh; curating the library — starring
+favorites, deleting clutter — happens in Linkosh itself.
 
 ## Install from source
 
@@ -110,7 +126,6 @@ library directly instead of the compact popup.
 - **Hybrid** combines keyword and meaning-based results. It is a good default
   when you remember the idea but not the exact wording.
 - **Semantic** ranks entirely by meaning.
-- The **≈** button on an item finds other saved items with similar content.
 
 Text search also supports filters and FTS5 operators:
 
@@ -119,11 +134,31 @@ kind:short
 collection:"watch later" pasta
 poster_name:"jane doe"
 cats AND NOT dogs
+is:starred sourdough
 ```
 
 The searchable fields are title, publication, summary, collection, kind, and
 poster name/handle. If an advanced query is invalid, Linkosh falls back to a
 plain substring search.
+
+### Star favorites, delete the rest
+
+Each row has three quiet actions (always visible in the popup, shown on hover
+in the full-page view):
+
+- **☆ Star** marks a favorite. The star turns gold and stays visible on the
+  row; the **★** button in the toolbar shows only starred items, and
+  `is:starred` in the search bar restricts any text search to favorites.
+- **✕ Delete** removes an item from the library view. An **Undo** appears in
+  the status line, and the **🗑** toolbar button opens the Deleted view, where
+  anything can be restored later.
+- **≈ More like this** lists other saved items with similar content, ranked
+  by meaning.
+
+Deletes are soft: the row stays in the database, hidden from browsing and
+every search mode, so a deleted item never resurfaces on the next sync — and
+never truly disappears until you use **Delete all saved items**. Stars and
+deletions are Linkosh-local and survive re-syncs.
 
 ### Choose services and check their status
 
@@ -169,7 +204,8 @@ Please treat Linkosh as experimental software.
   temporary rate limit. If that happens, wait a few minutes before retrying.
 - Some services expose the content's publish time but not the time you saved
   it. Linkosh sorts by save time when available, then publish time, then local
-  import time.
+  import time. Facebook exposes neither, so its items sort by when Linkosh
+  imported them rather than by save or post date.
 - Instagram thumbnail URLs expire. A Full sync can refresh them; the original
   post links continue to work.
 - YouTube identifies Shorts from playlist metadata. Older Shorts without the

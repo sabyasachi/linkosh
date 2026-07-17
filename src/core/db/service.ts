@@ -17,7 +17,8 @@ export interface DbApi {
   list(args: items.ListArgs): SavedItem[];
   search(args: items.SearchArgs): SavedItem[];
   setDeleted(args: { id: number; deleted: boolean }): { changed: number };
-  count(args: { provider?: ProviderId | null; deleted?: boolean }): number;
+  setStarred(args: { id: number; starred: boolean }): { changed: number };
+  count(args: { provider?: ProviderId | null; deleted?: boolean; starred?: boolean }): number;
   providerStats(args: Record<string, never>): items.ProviderStatsRow[];
   clearItems(args: { provider?: ProviderId | null }): { deleted: number };
 
@@ -61,6 +62,7 @@ export function createDbService(db: SqlDatabase): DbApi {
     list: (args) => items.list(db, args),
     search: (args) => items.search(db, args),
     setDeleted: (args) => items.setDeleted(db, args),
+    setStarred: (args) => items.setStarred(db, args),
     count: (args) => items.count(db, args),
     providerStats: () => items.providerStats(db),
     clearItems: (args) => items.clearItems(db, args),

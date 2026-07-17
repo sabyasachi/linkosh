@@ -30,7 +30,7 @@ body.page #search-row {
   margin: 12px 16px 0;
 }
 
-body.page #trash-banner {
+body.page .view-banner {
   margin: 12px 16px 0;
 }
 
@@ -43,6 +43,7 @@ body.page #search {
    visible in the popup, where there is no reliable hover affordance on
    touchpads). */
 body.page li.item button.similar,
+body.page li.item button.star,
 body.page li.item button.delete,
 body.page li.item button.restore {
   visibility: hidden;
@@ -50,10 +51,17 @@ body.page li.item button.restore {
 
 body.page li.item:hover button.similar,
 body.page li.item button.similar:focus-visible,
+body.page li.item:hover button.star,
+body.page li.item button.star:focus-visible,
 body.page li.item:hover button.delete,
 body.page li.item button.delete:focus-visible,
 body.page li.item:hover button.restore,
 body.page li.item button.restore:focus-visible {
+  visibility: visible;
+}
+
+/* …except a starred item's star, which stays visible as its badge. */
+body.page li.item button.star.on {
   visibility: visible;
 }
 

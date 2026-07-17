@@ -51,6 +51,7 @@ function ItemRow({
   item,
   providerLabel,
   onSimilar,
+  onToggleStar,
   onDelete,
   onRestore,
 }: {
@@ -58,6 +59,8 @@ function ItemRow({
   providerLabel: string;
   /** Absent in the Deleted view — "more like this" on a hidden item is confusing. */
   onSimilar?: ((item: SavedItem) => void) | undefined;
+  /** Absent in the Deleted view — restore first, then star. */
+  onToggleStar?: ((item: SavedItem) => void) | undefined;
   onDelete?: ((item: SavedItem) => void) | undefined;
   onRestore?: ((item: SavedItem) => void) | undefined;
 }) {
@@ -103,6 +106,15 @@ function ItemRow({
         </div>
       </a>
       {/* Siblings of the <a>, not children, so clicking them doesn't navigate. */}
+      {onToggleStar && (
+        <button
+          class={`star${item.starredAt ? " on" : ""}`}
+          title={item.starredAt ? "Unstar" : "Star"}
+          onClick={() => onToggleStar(item)}
+        >
+          {item.starredAt ? "★" : "☆"}
+        </button>
+      )}
       {onSimilar && (
         <button class="similar" title="More like this" onClick={() => onSimilar(item)}>
           ≈
@@ -137,6 +149,7 @@ export function App({ runtime }: { runtime: Runtime }) {
   const [stopping, setStopping] = useState(false);
   const [showSearchRow, setShowSearchRow] = useState(false);
   const [trash, setTrash] = useState(false);
+  const [starView, setStarView] = useState(false);
 
   const providerLabels = useMemo(() => new Map(providers.map((p) => [p.id, p.label])), [providers]);
 
@@ -153,11 +166,13 @@ export function App({ runtime }: { runtime: Runtime }) {
   // Which feature owns the item list right now. Background view-writers (the
   // sync progress poll, the post-sync refresh) may only touch a "list" view —
   // a search or "more like this" started mid-sync must not be clobbered.
-  const viewRef = useRef<"list" | "search" | "similar" | "deleted">("list");
-  // Mirrors the `trash` state for callbacks with stale closures (loadItems is
-  // captured by init/refresh paths created before the toggle flipped).
+  const viewRef = useRef<"list" | "search" | "similar" | "deleted" | "starred">("list");
+  // Mirror the view-toggle states for callbacks with stale closures (loadItems
+  // is captured by init/refresh paths created before a toggle flipped).
   const trashRef = useRef(false);
   trashRef.current = trash;
+  const starViewRef = useRef(false);
+  starViewRef.current = starView;
   // Current query/mode for callbacks created before the latest keystroke
   // (the post-sync search restore).
   const queryRef = useRef("");
@@ -170,28 +185,37 @@ export function App({ runtime }: { runtime: Runtime }) {
   // above it reach the latest version through this ref.
   const refreshViewRef = useRef<() => Promise<void>>(async () => {});
 
-  const listStatus = useCallback((total: number, lastMeta: ProviderMeta | null, deleted: boolean) => {
-    // meta is null in the All view (each provider has its own sync time).
-    setStatus({
-      text: deleted
-        ? total
-          ? `${total} deleted items`
-          : "No deleted items."
-        : total
-          ? `${total} saved items${lastMeta ? ` · ${formatSynced(lastMeta.syncedAt)}` : ""}`
-          : "No items yet — press Sync to fetch your saved items.",
-    });
-  }, []);
+  const listStatus = useCallback(
+    (total: number, lastMeta: ProviderMeta | null, view: "list" | "deleted" | "starred") => {
+      // meta is null in the All view (each provider has its own sync time).
+      setStatus({
+        text:
+          view === "deleted"
+            ? total
+              ? `${total} deleted items`
+              : "No deleted items."
+            : view === "starred"
+              ? total
+                ? `${total} starred items`
+                : "No starred items yet — press ☆ on an item to keep it here."
+              : total
+                ? `${total} saved items${lastMeta ? ` · ${formatSynced(lastMeta.syncedAt)}` : ""}`
+                : "No items yet — press Sync to fetch your saved items.",
+      });
+    },
+    []
+  );
 
   const loadItems = useCallback(
     async (providerChoice: ProviderChoice = providerRef.current) => {
-      const deleted = trashRef.current;
-      viewRef.current = deleted ? "deleted" : "list";
+      const view = trashRef.current ? "deleted" : starViewRef.current ? "starred" : "list";
+      viewRef.current = view;
       const gen = ++generationRef.current;
       try {
         const res = await api.listItems({
           provider: providerChoice === ALL ? null : providerChoice,
-          deleted,
+          deleted: view === "deleted",
+          starred: view === "starred",
           limit: PAGE_SIZE,
           offset: 0,
         });
@@ -201,9 +225,9 @@ export function App({ runtime }: { runtime: Runtime }) {
         setItems(res.items);
         setMeta(res.meta);
         setHasMore(res.items.length < res.total);
-        // Search covers live items only — the Deleted view hides the bar.
-        setShowSearchRow(!deleted && res.total > 0);
-        listStatus(res.total, res.meta, deleted);
+        // Search covers the plain live list only — filtered views hide the bar.
+        setShowSearchRow(view === "list" && res.total > 0);
+        listStatus(res.total, res.meta, view);
       } catch (e) {
         if (gen !== generationRef.current) return;
         setStatus({ text: errorText(e), error: true });
@@ -220,6 +244,7 @@ export function App({ runtime }: { runtime: Runtime }) {
       const res = await api.listItems({
         provider: providerRef.current === ALL ? null : providerRef.current,
         deleted: viewRef.current === "deleted",
+        starred: viewRef.current === "starred",
         limit: PAGE_SIZE,
         offset: offsetRef.current,
       });
@@ -398,7 +423,7 @@ export function App({ runtime }: { runtime: Runtime }) {
   // change, and an in-flight page appending afterwards is harmless.
   const dropRow = useCallback((id: number) => {
     setItems((prev) => prev.filter((i) => i.id !== id));
-    if (viewRef.current === "list" || viewRef.current === "deleted") {
+    if (viewRef.current === "list" || viewRef.current === "deleted" || viewRef.current === "starred") {
       offsetRef.current = Math.max(0, offsetRef.current - 1);
       totalRef.current = Math.max(0, totalRef.current - 1);
     }
@@ -447,16 +472,53 @@ export function App({ runtime }: { runtime: Runtime }) {
         return;
       }
       dropRow(item.id);
-      listStatus(totalRef.current, null, true);
+      listStatus(totalRef.current, null, "deleted");
     },
     [api, dropRow, listStatus]
   );
 
+  // Star/unstar toggles in place; in the Starred view an unstar removes the
+  // row (it no longer belongs there). No Undo needed — the button is its own.
+  const toggleStar = useCallback(
+    async (item: SavedItem) => {
+      const starred = !item.starredAt;
+      try {
+        await api.setItemStarred({ id: item.id, starred });
+      } catch (e) {
+        setStatus({ text: errorText(e), error: true });
+        return;
+      }
+      if (!starred && viewRef.current === "starred") {
+        dropRow(item.id);
+        listStatus(totalRef.current, null, "starred");
+      } else {
+        setItems((prev) =>
+          prev.map((i) => (i.id === item.id ? { ...i, starredAt: starred ? Date.now() : null } : i))
+        );
+      }
+    },
+    [api, dropRow, listStatus]
+  );
+
+  // The two filtered views are mutually exclusive — turning one on turns the
+  // other off; search is live-list-only, so entering/leaving either resets it.
   const toggleTrash = useCallback(() => {
     const next = !trashRef.current;
     trashRef.current = next;
     setTrash(next);
-    setQuery(""); // search is live-only; entering/leaving the trash resets it
+    starViewRef.current = false;
+    setStarView(false);
+    setQuery("");
+    void loadItems();
+  }, [loadItems]);
+
+  const toggleStarView = useCallback(() => {
+    const next = !starViewRef.current;
+    starViewRef.current = next;
+    setStarView(next);
+    trashRef.current = false;
+    setTrash(false);
+    setQuery("");
     void loadItems();
   }, [loadItems]);
 
@@ -499,7 +561,11 @@ export function App({ runtime }: { runtime: Runtime }) {
   const refreshView = useCallback(async () => {
     if (viewRef.current === "search" && queryRef.current.trim()) {
       await runSearch(queryRef.current, searchModeRef.current);
-    } else if (viewRef.current === "list" || viewRef.current === "deleted") {
+    } else if (
+      viewRef.current === "list" ||
+      viewRef.current === "deleted" ||
+      viewRef.current === "starred"
+    ) {
       await loadItems();
     }
   }, [loadItems, runSearch]);
@@ -628,6 +694,15 @@ export function App({ runtime }: { runtime: Runtime }) {
             {stopping ? "Stopping…" : syncing ? "Stop" : "Sync"}
           </button>
           <button
+            id="starred"
+            class="icon-button"
+            title={starView ? "Back to saved items" : "Starred items"}
+            aria-pressed={starView}
+            onClick={toggleStarView}
+          >
+            ★
+          </button>
+          <button
             id="trash"
             class="icon-button"
             title={trash ? "Back to saved items" : "Deleted items"}
@@ -655,12 +730,18 @@ export function App({ runtime }: { runtime: Runtime }) {
         </div>
       </header>
 
-      {/* Persistent while the trash is open — the header toggle alone is too
-          subtle a cue for which view is showing (and how to leave it). */}
+      {/* Persistent while a filtered view is open — the header toggle alone is
+          too subtle a cue for which view is showing (and how to leave it). */}
       {trash && (
-        <div id="trash-banner">
+        <div class="view-banner">
           <span>Viewing deleted items</span>
           <button onClick={toggleTrash}>✕ Back to saved items</button>
+        </div>
+      )}
+      {starView && (
+        <div class="view-banner">
+          <span>Viewing starred items</span>
+          <button onClick={toggleStarView}>✕ Back to saved items</button>
         </div>
       )}
 
@@ -669,7 +750,7 @@ export function App({ runtime }: { runtime: Runtime }) {
           id="search"
           type="search"
           placeholder="Filter saved items…"
-          title='Full-text search. Supports FTS5 filters, e.g. kind:short, collection:"watch later", poster_name:"jane doe", poster_handle:jane, cats AND dogs, NOT reel'
+          title='Full-text search. Supports FTS5 filters, e.g. kind:short, collection:"watch later", poster_name:"jane doe", poster_handle:jane, cats AND dogs, NOT reel — plus is:starred to search favorites only'
           value={query}
           onInput={(e) => {
             const text = (e.currentTarget as HTMLInputElement).value;
@@ -715,6 +796,7 @@ export function App({ runtime }: { runtime: Runtime }) {
             item={item}
             providerLabel={provider === ALL ? providerLabels.get(item.provider) || item.provider : ""}
             onSimilar={trash ? undefined : (it) => void showSimilar(it)}
+            onToggleStar={trash ? undefined : (it) => void toggleStar(it)}
             onDelete={trash ? undefined : (it) => void deleteItem(it)}
             onRestore={trash ? (it) => void restoreItem(it) : undefined}
           />

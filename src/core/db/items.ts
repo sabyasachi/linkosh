@@ -5,7 +5,7 @@
 // touches JSON text.
 import type { ParsedItem, ProviderId, SavedItem } from "../types.ts";
 import type { SqlDatabase, SqlValue } from "./port.ts";
-import { ftsQuery } from "../fts.ts";
+import { extractQueryFlags, ftsQuery } from "../fts.ts";
 
 // Explicit projection for every op whose rows may ride a chrome.runtime
 // message (JSON-serialized): the embedding BLOB must never be selected there —
@@ -31,6 +31,7 @@ export const ITEM_COLUMNS = [
   "published_at AS publishedAt",
   "created_at AS createdAt",
   "deleted_at AS deletedAt",
+  "starred_at AS starredAt",
 ].join(", ");
 
 // Same projection qualified with the saved_items alias, for the FTS join
@@ -104,9 +105,10 @@ export function upsert(db: SqlDatabase, { provider, account, items }: UpsertArgs
     INSERT INTO saved_items
       (provider, account, external_id, url, title, publication, summary, image, kind, duration, collection, poster_name, poster_handle, poster_bio, stats, bookmarked_at, published_at, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    -- deleted_at is deliberately absent from this SET list: a user-deleted
-    -- item that is still saved on the service flows back through upsert on
-    -- every incremental sync, and refreshing its fields must not undelete it.
+    -- deleted_at and starred_at are deliberately absent from this SET list:
+    -- an item that is still saved on the service flows back through upsert on
+    -- every incremental sync, and refreshing its fields must not undelete or
+    -- unstar it.
     ON CONFLICT (provider, account, external_id) DO UPDATE SET
       url = excluded.url,
       title = excluded.title,
@@ -203,13 +205,16 @@ export interface ListArgs {
   provider?: ProviderId | null;
   /** true lists the trash (soft-deleted rows) instead of live items. */
   deleted?: boolean;
+  /** true restricts to starred rows (composes with deleted: a starred item in
+   *  the trash shows in the trash, not the starred view). */
+  starred?: boolean;
   limit?: number;
   offset?: number;
 }
 
 export function list(
   db: SqlDatabase,
-  { provider, deleted = false, limit = 1000, offset = 0 }: ListArgs
+  { provider, deleted = false, starred = false, limit = 1000, offset = 0 }: ListArgs
 ): SavedItem[] {
   // bookmarked_at DESC sorts providers that expose a true save timestamp
   // newest-first; published_at is the content-time fallback. Rows with
@@ -220,7 +225,8 @@ export function list(
   return fetchItems(
     db,
     `SELECT ${ITEM_COLUMNS} FROM saved_items
-     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"} ${provider ? "AND provider = ?" : ""}
+     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"}
+       ${starred ? "AND starred_at IS NOT NULL" : ""} ${provider ? "AND provider = ?" : ""}
      ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ? OFFSET ?`,
     provider ? [provider, limit, offset] : [limit, offset]
   );
@@ -236,6 +242,15 @@ export function setDeleted(
   return { changed: db.rows<{ n: number }>("SELECT changes() AS n", [])[0]!.n };
 }
 
+/** Star (or unstar) one item. */
+export function setStarred(
+  db: SqlDatabase,
+  { id, starred }: { id: number; starred: boolean }
+): { changed: number } {
+  db.run("UPDATE saved_items SET starred_at = ? WHERE id = ?", [starred ? Date.now() : null, id]);
+  return { changed: db.rows<{ n: number }>("SELECT changes() AS n", [])[0]!.n };
+}
+
 export interface SearchArgs {
   provider?: ProviderId | null;
   query: string;
@@ -243,8 +258,13 @@ export interface SearchArgs {
 }
 
 export function search(db: SqlDatabase, { provider, query, limit = 200 }: SearchArgs): SavedItem[] {
-  const match = ftsQuery(query);
-  if (!match) return list(db, { provider: provider ?? null });
+  // is:starred is a Linkosh flag, not an FTS column — strip it from the text
+  // and apply it as SQL in both arms. A flags-only query ("is:starred") has
+  // no remaining text and degrades to the filtered list.
+  const flags = extractQueryFlags(query);
+  const starredSql = flags.starred ? "AND s.starred_at IS NOT NULL" : "";
+  const match = ftsQuery(flags.text);
+  if (!match) return list(db, { provider: provider ?? null, starred: flags.starred });
   try {
     return fetchItems(
       db,
@@ -252,17 +272,18 @@ export function search(db: SqlDatabase, { provider, query, limit = 200 }: Search
       // them), so live-ness is filtered on the joined saved_items row.
       `SELECT ${ITEM_COLUMNS_S} FROM saved_items_fts f
        JOIN saved_items s ON s.id = f.rowid
-       WHERE saved_items_fts MATCH ? AND s.deleted_at IS NULL ${provider ? "AND s.provider = ?" : ""}
+       WHERE saved_items_fts MATCH ? AND s.deleted_at IS NULL ${starredSql}
+         ${provider ? "AND s.provider = ?" : ""}
        ORDER BY rank LIMIT ?`,
       provider ? [match, provider, limit] : [match, limit]
     );
   } catch {
     // FTS5 syntax edge case: fall back to a plain substring scan.
-    const like = `%${query.trim()}%`;
+    const like = `%${flags.text}%`;
     return fetchItems(
       db,
-      `SELECT ${ITEM_COLUMNS} FROM saved_items
-       WHERE deleted_at IS NULL AND ${provider ? "provider = ? AND" : ""}
+      `SELECT ${ITEM_COLUMNS} FROM saved_items s
+       WHERE s.deleted_at IS NULL ${starredSql} AND ${provider ? "s.provider = ? AND" : ""}
          (title LIKE ? OR publication LIKE ? OR summary LIKE ? OR collection LIKE ? OR poster_name LIKE ? OR poster_handle LIKE ?)
        ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ?`,
       provider
@@ -292,11 +313,16 @@ export function providerStats(db: SqlDatabase): ProviderStatsRow[] {
 
 export function count(
   db: SqlDatabase,
-  { provider, deleted = false }: { provider?: ProviderId | null; deleted?: boolean } = {}
+  {
+    provider,
+    deleted = false,
+    starred = false,
+  }: { provider?: ProviderId | null; deleted?: boolean; starred?: boolean } = {}
 ): number {
   return db.rows<{ n: number }>(
     `SELECT COUNT(*) AS n FROM saved_items
-     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"} ${provider ? "AND provider = ?" : ""}`,
+     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"}
+       ${starred ? "AND starred_at IS NOT NULL" : ""} ${provider ? "AND provider = ?" : ""}`,
     provider ? [provider] : []
   )[0]!.n;
 }

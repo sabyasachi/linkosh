@@ -230,6 +230,34 @@ test("setItemDeleted soft-deletes and restores through listItems; rejected mid-s
   db.close();
 });
 
+test("setItemStarred toggles the star through listItems; rejected mid-sync", async () => {
+  const { provider, gate, landed } = gatedProvider();
+  const { db, svc } = await makeService(provider);
+
+  const run = svc.sync({ provider: "substack" });
+  await landed.promise;
+  await assert.rejects(async () => svc.setItemStarred({ id: 1, starred: true }), /sync is running/);
+  gate.resolve();
+  await run;
+
+  const before = await svc.listItems({ provider: null });
+  const target = before.items[0]!;
+  assert.equal(target.starredAt, null);
+
+  assert.deepEqual(await svc.setItemStarred({ id: target.id, starred: true }), { changed: 1 });
+  // Starring hides nothing from the main list…
+  assert.equal((await svc.listItems({ provider: null })).total, 2);
+  // …while the starred filter narrows to it.
+  const starred = await svc.listItems({ provider: null, starred: true });
+  assert.equal(starred.total, 1);
+  assert.equal(starred.items[0]!.id, target.id);
+  assert.ok(starred.items[0]!.starredAt! > 0);
+
+  assert.deepEqual(await svc.setItemStarred({ id: target.id, starred: false }), { changed: 1 });
+  assert.equal((await svc.listItems({ provider: null, starred: true })).total, 0);
+  db.close();
+});
+
 /** An instantly-completing one-page provider (no gate), optionally with a
  *  login probe, for the enablement/status tests. */
 function instantProvider(id: "substack" | "hackernews", loggedIn?: boolean): Provider {
