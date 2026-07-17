@@ -38,6 +38,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".mjs": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".jpg": "image/jpeg",
   ".png": "image/png",
   ".svg": "image/svg+xml",
   ".wasm": "application/wasm",
@@ -167,6 +168,123 @@ export function seedFixtures(db: SqlDatabase): void {
     rawStore(db, { provider, account, page: { ...page, page: i }, externalIds, fetchedAt: Date.now() })
   );
   ingestPending(db);
+
+  // Parser fixtures are intentionally minimal and some preserve awkward edge
+  // cases for regression tests. Keep those raw captures pristine, then dress
+  // only the dev-harness rows with fictional copy and locally served imagery
+  // so screenshots resemble a real library without publishing anyone's saved
+  // history or third-party content.
+  const demoItems = [
+    {
+      provider: "hackernews",
+      externalId: "11111",
+      title: "Designing sync engines that survive partial failure",
+      publication: "Systems Field Guide",
+      summary: "",
+      image: "/demo-thumbnails/distributed-systems.jpg",
+      url: "https://example.com/linkosh-demo/1",
+      posterName: "Demo Systems Lab",
+      posterHandle: "",
+    },
+    {
+      provider: "hackernews",
+      externalId: "22222",
+      title: "Ask HN: What makes a personal knowledge tool stick?",
+      publication: "",
+      summary: "",
+      image: "/demo-thumbnails/knowledge-cards.jpg",
+      url: "https://example.com/linkosh-demo/2",
+      posterName: "Demo Knowledge Club",
+      posterHandle: "",
+    },
+    {
+      provider: "substack",
+      externalId: "post:9001",
+      title: "Writing notes your future self can find",
+      publication: "Field Notes",
+      summary: "A practical system for turning scattered reading into useful ideas.",
+      image: "/demo-thumbnails/writing-desk.jpg",
+      url: "https://example.com/linkosh-demo/3",
+      posterName: "Demo Field Notes",
+      posterHandle: "",
+    },
+    {
+      provider: "substack",
+      externalId: "note:7001",
+      title: "",
+      publication: "Field Notes",
+      summary: "The best reading systems make retrieval feel effortless.",
+      image: "/demo-thumbnails/coffee.jpg",
+      url: "https://example.com/linkosh-demo/4",
+      posterName: "Demo Reading Journal",
+      posterHandle: "",
+    },
+    {
+      provider: "youtube",
+      externalId: "abc123",
+      title: "Generative art from first principles",
+      publication: "",
+      summary: "Build flowing forms from particles, noise, and a few simple rules.",
+      image: "/demo-thumbnails/creative-coding.jpg",
+      url: "https://example.com/linkosh-demo/5",
+      posterName: "Demo Motion Studio",
+      posterHandle: "",
+    },
+    {
+      provider: "instagram",
+      externalId: "310000000000001",
+      title: "",
+      publication: "",
+      summary: "Weeknight tomato pasta in twenty minutes.",
+      image: "/demo-thumbnails/pasta.jpg",
+      url: "https://example.com/linkosh-demo/6",
+      posterName: "Demo Kitchen",
+      posterHandle: "",
+    },
+    {
+      provider: "youtube",
+      externalId: "short1",
+      title: "Three CSS tricks for calmer interfaces",
+      publication: "",
+      summary: "",
+      image: "/demo-thumbnails/distributed-systems.jpg",
+      url: "https://example.com/linkosh-demo/7",
+      posterName: "Demo Interface Lab",
+      posterHandle: "",
+    },
+    {
+      provider: "instagram",
+      externalId: "310000000000002",
+      title: "",
+      publication: "",
+      summary: "A quiet trail above a glacier-blue lake.",
+      image: "/demo-thumbnails/alpine-trail.jpg",
+      url: "https://example.com/linkosh-demo/8",
+      posterName: "Demo Trail Journal",
+      posterHandle: "",
+    },
+  ];
+  db.transaction(() => {
+    for (const item of demoItems) {
+      db.run(
+        `UPDATE saved_items
+         SET title = ?, publication = ?, summary = ?, image = ?, url = ?,
+             poster_name = ?, poster_handle = ?, embedding = NULL, embedding_model = NULL
+         WHERE provider = ? AND external_id = ?`,
+        [
+          item.title,
+          item.publication,
+          item.summary,
+          item.image,
+          item.url,
+          item.posterName,
+          item.posterHandle,
+          item.provider,
+          item.externalId,
+        ]
+      );
+    }
+  });
 }
 
 // ---------- HTTP plumbing ----------
@@ -192,6 +310,7 @@ async function main(): Promise<void> {
   if (!dbFile) seedFixtures(db);
   const service = createDevService(db);
   const staticRoot = join(root, "dist", "src");
+  const demoThumbRoot = join(root, "tests", "fixtures", "ux", "thumbnails");
 
   const server = createServer((req, res) => {
     void (async () => {
@@ -216,6 +335,22 @@ async function main(): Promise<void> {
             // resolve against its real directory.
             res.writeHead(302, { location: "/pages/popup/dev.html" });
             return res.end();
+          }
+          if (url.pathname.startsWith("/demo-thumbnails/")) {
+            const pathname = decodeURIComponent(url.pathname.slice("/demo-thumbnails/".length));
+            const path = normalize(join(demoThumbRoot, pathname));
+            if (relative(demoThumbRoot, path).startsWith("..")) {
+              res.writeHead(404);
+              return res.end("not found");
+            }
+            try {
+              const bytes = readFileSync(path);
+              res.writeHead(200, { "content-type": CONTENT_TYPES[extname(path)] ?? "application/octet-stream" });
+              return res.end(bytes);
+            } catch {
+              res.writeHead(404);
+              return res.end("not found");
+            }
           }
           const pathname = decodeURIComponent(url.pathname);
           const path = normalize(join(staticRoot, pathname));
