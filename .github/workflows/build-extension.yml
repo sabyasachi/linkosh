@@ -47,12 +47,11 @@ jobs:
 
           (cd dist/src && zip -q -r "${GITHUB_WORKSPACE}/${archive}" .)
           echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
-          echo "artifact=linkosh-chrome-v${version}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ steps.package.outputs.artifact }}
+          name: linkosh-chrome-extension
           path: dist/src/
           if-no-files-found: error
 

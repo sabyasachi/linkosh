@@ -78,13 +78,63 @@ mode for an extension installed outside the Web Store.
 
 1. Download `linkosh-chrome-v*.zip` from the latest
    [GitHub release](https://github.com/sabyasachi/linkosh/releases/latest).
-2. Extract the ZIP to a permanent folder. Chrome continues to use the files in
-   that folder after installation, so do not delete it.
+2. Extract the ZIP into a permanent folder named `linkosh-extension`. Chrome
+   continues to use that exact folder after installation, so do not rename,
+   move, or delete it.
 3. Open `chrome://extensions` in Chrome.
 4. Turn on **Developer mode** in the top-right corner.
 5. Click **Load unpacked** and select the extracted folder.
 6. Pin Linkosh from Chrome's Extensions menu if you want it to stay visible in
    the toolbar.
+
+#### Update a prebuilt installation
+
+Keep the permanent folder's path unchanged. A clean directory swap is safer
+than copying over the old files because a release may remove files that were
+present in an earlier build.
+
+1. Use **Export** in Linkosh to make a database backup.
+2. Download the new release ZIP.
+3. Close Chrome completely.
+4. Extract the release to a temporary folder and confirm that `manifest.json`
+   is directly inside it.
+5. Rename the current installation folder as a rollback copy, then move the
+   temporary folder to the current installation's exact former path.
+6. Reopen Chrome and click **Reload** on the existing Linkosh card in
+   `chrome://extensions`. Do not remove the existing card or click **Load
+   unpacked** again.
+7. After confirming that Linkosh opens and the saved library is intact, the
+   old code-folder backup can be deleted. The exported SQLite file is the data
+   backup; the renamed folder contains only the previous extension code.
+
+The following examples update `v0.1.0` to `v0.2.0` and assume the permanent
+folder is directly inside your home directory. Substitute the versions and
+paths as needed. Make sure the backup destination does not already exist.
+
+On Linux or macOS, run:
+
+```sh
+linkosh_update_dir="$(mktemp -d)"
+unzip "$HOME/Downloads/linkosh-chrome-v0.2.0.zip" -d "$linkosh_update_dir"
+test -f "$linkosh_update_dir/manifest.json" || { echo "manifest.json is not at the ZIP root" >&2; exit 1; }
+mv "$HOME/linkosh-extension" "$HOME/linkosh-extension.backup-before-v0.2.0"
+mv "$linkosh_update_dir" "$HOME/linkosh-extension"
+```
+
+On Windows, open PowerShell and run:
+
+```powershell
+$LinkoshUpdateDir = Join-Path $env:TEMP ("linkosh-update-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Path $LinkoshUpdateDir | Out-Null
+Expand-Archive -LiteralPath "$env:USERPROFILE\Downloads\linkosh-chrome-v0.2.0.zip" -DestinationPath $LinkoshUpdateDir
+if (-not (Test-Path (Join-Path $LinkoshUpdateDir "manifest.json"))) { throw "manifest.json is not at the ZIP root" }
+Move-Item -LiteralPath "$env:USERPROFILE\linkosh-extension" -Destination "$env:USERPROFILE\linkosh-extension.backup-before-v0.2.0"
+Move-Item -LiteralPath $LinkoshUpdateDir -Destination "$env:USERPROFILE\linkosh-extension"
+```
+
+Chrome gives an unpacked extension loaded from a different path a new extension
+ID. A new installation cannot access the database stored under the old ID,
+even though that data may still remain in the Chrome profile.
 
 ### Build from source
 
