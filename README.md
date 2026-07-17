@@ -68,18 +68,31 @@ Linkosh keeps imported items as an archive. Removing an item on the original
 service does not delete the copy in Linkosh; curating the library — starring
 favorites, deleting clutter — happens in Linkosh itself.
 
-## Install from source
+## Install
 
-There is no Chrome Web Store release yet. For now, installation requires a
-local build.
+There is no Chrome Web Store release yet. For now, install a prebuilt release
+or build the extension from source. In either case, Chrome requires Developer
+mode for an extension installed outside the Web Store.
 
-### What you need
+### Install a prebuilt release
+
+1. Download `linkosh-chrome-v*.zip` from the latest
+   [GitHub release](https://github.com/sabyasachi/linkosh/releases/latest).
+2. Extract the ZIP to a permanent folder. Chrome continues to use the files in
+   that folder after installation, so do not delete it.
+3. Open `chrome://extensions` in Chrome.
+4. Turn on **Developer mode** in the top-right corner.
+5. Click **Load unpacked** and select the extracted folder.
+6. Pin Linkosh from Chrome's Extensions menu if you want it to stay visible in
+   the toolbar.
+
+### Build from source
+
+#### What you need
 
 - Google Chrome
 - [Git](https://git-scm.com/downloads)
 - [Node.js 23.6 or newer](https://nodejs.org/)
-
-### Build and install
 
 1. Clone the repository and enter it:
 
