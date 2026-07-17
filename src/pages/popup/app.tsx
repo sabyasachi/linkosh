@@ -750,7 +750,7 @@ export function App({ runtime }: { runtime: Runtime }) {
           id="search"
           type="search"
           placeholder="Filter saved items…"
-          title='Full-text search. Supports FTS5 filters, e.g. kind:short, collection:"watch later", poster_name:"jane doe", poster_handle:jane, cats AND dogs, NOT reel'
+          title='Full-text search. Supports FTS5 filters, e.g. kind:short, collection:"watch later", poster_name:"jane doe", poster_handle:jane, cats AND dogs, NOT reel — plus is:starred to search favorites only'
           value={query}
           onInput={(e) => {
             const text = (e.currentTarget as HTMLInputElement).value;

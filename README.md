@@ -136,6 +136,7 @@ kind:short
 collection:"watch later" pasta
 poster_name:"jane doe"
 cats AND NOT dogs
+is:starred sourdough
 ```
 
 The searchable fields are title, publication, summary, collection, kind, and
@@ -148,7 +149,8 @@ Each row has three quiet actions (always visible in the popup, shown on hover
 in the full-page view):
 
 - **☆ Star** marks a favorite. The star turns gold and stays visible on the
-  row; the **★** button in the toolbar shows only starred items.
+  row; the **★** button in the toolbar shows only starred items, and
+  `is:starred` in the search bar restricts any text search to favorites.
 - **✕ Delete** removes an item from the library view. An **Undo** appears in
   the status line, and the **🗑** toolbar button opens the Deleted view, where
   anything can be restored later.

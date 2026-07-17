@@ -13,7 +13,7 @@ import {
 } from "../src/core/db/items.ts";
 import { initSchema } from "../src/core/db/schema.ts";
 import { storeEmbeddings } from "../src/core/db/embeddings.ts";
-import { ftsQuery } from "../src/core/fts.ts";
+import { extractQueryFlags, ftsQuery } from "../src/core/fts.ts";
 import type { ParsedItem } from "../src/core/types.ts";
 
 const item = (externalId: string, extra: Partial<ParsedItem> = {}): ParsedItem => ({
@@ -207,6 +207,41 @@ test("ftsQuery quotes plain words, adds prefix star, passes operators through", 
   assert.equal(ftsQuery('say "hi"'), 'say "hi"'); // quoted phrase: untouched
   assert.equal(ftsQuery("kind:short cats"), "kind:short cats"); // column filter: untouched
   assert.equal(ftsQuery("cats AND dogs"), "cats AND dogs");
+});
+
+test("extractQueryFlags strips is:starred anywhere in the query, case-insensitively", () => {
+  assert.deepEqual(extractQueryFlags("is:starred"), { text: "", starred: true });
+  assert.deepEqual(extractQueryFlags("cats is:starred dogs"), { text: "cats  dogs", starred: true });
+  assert.deepEqual(extractQueryFlags("IS:STARRED rust"), { text: "rust", starred: true });
+  assert.deepEqual(extractQueryFlags("kind:short"), { text: "kind:short", starred: false });
+  // No accidental match inside a longer token.
+  assert.deepEqual(extractQueryFlags("this:starred"), { text: "this:starred", starred: false });
+});
+
+test("search honors is:starred in the FTS arm, the LIKE fallback, and flags-only queries", async () => {
+  const db = await openDb();
+  upsert(db, {
+    provider: "hackernews",
+    account: "u",
+    items: [
+      item("fav", { title: 'rust "unbalanced favorite' }),
+      item("plain", { title: 'rust "unbalanced ordinary' }),
+    ],
+  });
+  const id = db.rows<{ id: number }>("SELECT id FROM saved_items WHERE external_id = 'fav'")[0]!.id;
+  setStarred(db, { id, starred: true });
+
+  // FTS arm: text narrowed to starred rows.
+  assert.deepEqual(search(db, { query: "rust is:starred" }).map((r) => r.externalId), ["fav"]);
+  assert.equal(search(db, { query: "rust" }).length, 2);
+  // Flags-only query degrades to the starred list.
+  assert.deepEqual(search(db, { query: "is:starred" }).map((r) => r.externalId), ["fav"]);
+  // LIKE fallback (unterminated quote breaks FTS5) applies the flag too.
+  assert.deepEqual(search(db, { query: '"unbalanced is:starred' }).map((r) => r.externalId), ["fav"]);
+  // Starred but deleted stays hidden.
+  setDeleted(db, { id, deleted: true });
+  assert.deepEqual(search(db, { query: "rust is:starred" }), []);
+  db.close();
 });
 
 test("search: plain text, prefix-as-you-type, column filter, provider scope", async () => {

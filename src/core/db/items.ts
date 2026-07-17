@@ -5,7 +5,7 @@
 // touches JSON text.
 import type { ParsedItem, ProviderId, SavedItem } from "../types.ts";
 import type { SqlDatabase, SqlValue } from "./port.ts";
-import { ftsQuery } from "../fts.ts";
+import { extractQueryFlags, ftsQuery } from "../fts.ts";
 
 // Explicit projection for every op whose rows may ride a chrome.runtime
 // message (JSON-serialized): the embedding BLOB must never be selected there —
@@ -258,8 +258,13 @@ export interface SearchArgs {
 }
 
 export function search(db: SqlDatabase, { provider, query, limit = 200 }: SearchArgs): SavedItem[] {
-  const match = ftsQuery(query);
-  if (!match) return list(db, { provider: provider ?? null });
+  // is:starred is a Linkosh flag, not an FTS column — strip it from the text
+  // and apply it as SQL in both arms. A flags-only query ("is:starred") has
+  // no remaining text and degrades to the filtered list.
+  const flags = extractQueryFlags(query);
+  const starredSql = flags.starred ? "AND s.starred_at IS NOT NULL" : "";
+  const match = ftsQuery(flags.text);
+  if (!match) return list(db, { provider: provider ?? null, starred: flags.starred });
   try {
     return fetchItems(
       db,
@@ -267,17 +272,18 @@ export function search(db: SqlDatabase, { provider, query, limit = 200 }: Search
       // them), so live-ness is filtered on the joined saved_items row.
       `SELECT ${ITEM_COLUMNS_S} FROM saved_items_fts f
        JOIN saved_items s ON s.id = f.rowid
-       WHERE saved_items_fts MATCH ? AND s.deleted_at IS NULL ${provider ? "AND s.provider = ?" : ""}
+       WHERE saved_items_fts MATCH ? AND s.deleted_at IS NULL ${starredSql}
+         ${provider ? "AND s.provider = ?" : ""}
        ORDER BY rank LIMIT ?`,
       provider ? [match, provider, limit] : [match, limit]
     );
   } catch {
     // FTS5 syntax edge case: fall back to a plain substring scan.
-    const like = `%${query.trim()}%`;
+    const like = `%${flags.text}%`;
     return fetchItems(
       db,
-      `SELECT ${ITEM_COLUMNS} FROM saved_items
-       WHERE deleted_at IS NULL AND ${provider ? "provider = ? AND" : ""}
+      `SELECT ${ITEM_COLUMNS} FROM saved_items s
+       WHERE s.deleted_at IS NULL ${starredSql} AND ${provider ? "s.provider = ? AND" : ""}
          (title LIKE ? OR publication LIKE ? OR summary LIKE ? OR collection LIKE ? OR poster_name LIKE ? OR poster_handle LIKE ?)
        ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ?`,
       provider
