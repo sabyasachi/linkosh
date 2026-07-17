@@ -36,9 +36,10 @@ function ensureInit(): Promise<void> {
 const handlers: Handlers<EmbedderApi> = {
   configure({ settings }) {
     const next = resolveProvider(settings);
-    // Same local model: keep the loaded pipeline. Cloud providers are always
-    // swapped even on an unchanged id — the API key may have changed, and
-    // their init() is a no-op so the reset costs nothing.
+    // Same local model: keep the loaded pipeline instead of re-downloading.
+    // (The startsWith guard matters again when cloud providers return: they
+    // must be swapped even on an unchanged id — the API key may have changed,
+    // and their init() is a no-op so the reset costs nothing.)
     if (next.id === provider.id && next.id.startsWith("local:")) return { model: provider.id };
     provider = next;
     initPromise = null;
@@ -65,9 +66,8 @@ const handlers: Handlers<EmbedderApi> = {
       initError = null;
       return vectors;
     } catch (e: unknown) {
-      // init() failures are recorded by ensureInit; cloud providers initialize
-      // trivially and fail here instead (bad key, quota, permission, input,
-      // network). Keep either kind visible through aiStatus until a successful
+      // init() failures are recorded by ensureInit; embed-time failures land
+      // here. Keep either kind visible through aiStatus until a successful
       // embed or provider reconfiguration clears it.
       initError = e instanceof Error ? e.message : String(e);
       throw e;

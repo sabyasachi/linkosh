@@ -8,8 +8,8 @@ test("memory prefs: get/set/remove round-trip", async () => {
   assert.equal(await prefs.get("searchMode"), undefined);
   await prefs.set("openFullPage", true);
   assert.equal(await prefs.get("openFullPage"), true);
-  await prefs.set("ai:settings", { embedProvider: "openai", keys: { openai: "sk-1" } });
-  assert.deepEqual(await prefs.get("ai:settings"), { embedProvider: "openai", keys: { openai: "sk-1" } });
+  await prefs.set("ai:settings", { embedProvider: "local" });
+  assert.deepEqual(await prefs.get("ai:settings"), { embedProvider: "local" });
   await prefs.remove("ai:settings");
   assert.equal(await prefs.get("ai:settings"), undefined);
 });

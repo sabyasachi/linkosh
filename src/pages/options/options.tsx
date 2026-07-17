@@ -1,7 +1,7 @@
-// Options page: embedding-provider selection + cloud API keys (shared infra —
-// the auto-tagging plan reuses the Anthropic key), a live view of the
-// embedding backlog, and the developer toggles. Settings live under the typed
-// "ai:settings" pref; the background watches that key and pushes a
+// Options page: service toggles, a live view of the embedding backlog, and
+// the developer toggles. Embedding is on-device only for now; when cloud
+// providers return, their selection + API-key UI writes the typed
+// "ai:settings" pref — the background watches that key and pushes a
 // reconfigure to the AI worker (the offscreen document can't read
 // chrome.storage itself).
 import { h, Fragment, render } from "../../vendor/preact/preact.js";
@@ -10,8 +10,7 @@ import { createClient } from "../../core/rpc/client.ts";
 import { runtimeTransport, type RuntimeLike } from "../../core/rpc/transports.ts";
 import { createChromePrefs } from "../../ext/chrome-prefs.ts";
 import type { BackgroundApi } from "../../ext/background-service.ts";
-import type { AiSettings, EmbedProviderId, OrchestratorStatus, ProviderId } from "../../core/types.ts";
-import type { PrefsSchema } from "../../core/prefs.ts";
+import type { OrchestratorStatus, ProviderId } from "../../core/types.ts";
 import type { RawStatsRow } from "../../core/db/raw.ts";
 
 const api = createClient<BackgroundApi>(
@@ -37,28 +36,6 @@ async function downloadExport(): Promise<void> {
   URL.revokeObjectURL(url);
   await root.removeEntry(file).catch(() => {});
 }
-
-// Origins we need optional host permission for, per cloud provider, so
-// extension-context fetches to the API bypass CORS.
-const API_ORIGINS: Partial<Record<EmbedProviderId, string>> = {
-  openai: "https://api.openai.com/*",
-  gemini: "https://generativelanguage.googleapis.com/*",
-  voyage: "https://api.voyageai.com/*",
-};
-
-type KeyName = "openai" | "gemini" | "voyage" | "anthropic";
-
-const KEY_FIELDS: { name: KeyName; label: string; placeholder: string; hint?: string }[] = [
-  { name: "openai", label: "OpenAI API key", placeholder: "sk-…" },
-  { name: "gemini", label: "Gemini API key", placeholder: "AIza…" },
-  { name: "voyage", label: "Voyage API key", placeholder: "pa-…" },
-  {
-    name: "anthropic",
-    label: "Anthropic API key",
-    placeholder: "sk-ant-…",
-    hint: "Used for tag labeling only — Anthropic has no embeddings API.",
-  },
-];
 
 function formatStatus(s: OrchestratorStatus): string {
   const lines = [`Model: ${s.model}`];
@@ -113,10 +90,6 @@ function PrefToggle({
 
 function OptionsApp() {
   const [services, setServices] = useState<{ id: ProviderId; label: string; enabled: boolean }[]>([]);
-  const [embedProvider, setEmbedProvider] = useState<EmbedProviderId>("local");
-  const [keys, setKeys] = useState<Record<KeyName, string>>({ openai: "", gemini: "", voyage: "", anthropic: "" });
-  const [saveStatus, setSaveStatus] = useState("");
-  const [saving, setSaving] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [aiStatus, setAiStatus] = useState("Loading…");
   const [deleteStatus, setDeleteStatus] = useState("");
@@ -148,9 +121,6 @@ function OptionsApp() {
   useEffect(() => {
     const unwatchCaptureMode = prefs.watch("captureRaw", (value) => setCaptureMode(Boolean(value)));
     void (async () => {
-      const settings = await prefs.get("ai:settings");
-      setEmbedProvider(settings?.embedProvider ?? "local");
-      setKeys((prev) => ({ ...prev, ...(settings?.keys ?? {}) }));
       // The full registry with enablement — listProviders would hide already-
       // disabled services, making them impossible to re-enable.
       void api
@@ -165,36 +135,6 @@ function OptionsApp() {
       unwatchCaptureMode();
     };
   }, []);
-
-  const save = async () => {
-    setSaving(true);
-    setSaveStatus("");
-    try {
-      if (embedProvider !== "local" && !keys[embedProvider as KeyName]?.trim()) {
-        setSaveStatus("That provider needs an API key.");
-        return;
-      }
-      // Must run inside the click gesture for the permission prompt to show.
-      const origin = API_ORIGINS[embedProvider];
-      if (origin) {
-        const granted = await chrome.permissions.request({ origins: [origin] });
-        if (!granted) {
-          setSaveStatus("Permission for the API origin was declined — staying on Local.");
-          return;
-        }
-      }
-      const settings: PrefsSchema["ai:settings"] = {
-        embedProvider,
-        keys: Object.fromEntries(
-          Object.entries(keys).map(([name, value]) => [name, value.trim()])
-        ) as AiSettings["keys"],
-      };
-      await prefs.set("ai:settings", settings);
-      setSaveStatus("Saved.");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const deleteItems = async () => {
     if (!confirm("Delete every saved item? Captured raw pages are kept. This can't be undone.")) return;
@@ -332,45 +272,9 @@ function OptionsApp() {
 
       <h2>Semantic search</h2>
       <p class="hint">
-        By default embeddings are computed on-device (a small model is downloaded once, then
-        everything runs offline). A cloud API key upgrades embedding quality. Keys are stored in
-        chrome.storage.local, which is plaintext on disk.
+        Embeddings are computed on-device: a small model is downloaded once, then everything runs
+        offline. Nothing is sent to any AI API.
       </p>
-
-      <label for="embed-provider">Embedding provider</label>
-      <select
-        id="embed-provider"
-        value={embedProvider}
-        onChange={(e) => setEmbedProvider((e.currentTarget as HTMLSelectElement).value as EmbedProviderId)}
-      >
-        <option value="local">Local (on-device, default)</option>
-        <option value="openai">OpenAI (text-embedding-3-small)</option>
-        <option value="gemini">Gemini (gemini-embedding-001)</option>
-        <option value="voyage">Voyage (voyage-3.5-lite)</option>
-      </select>
-
-      {KEY_FIELDS.map(({ name, label, placeholder, hint }) => (
-        <>
-          <label for={`key-${name}`}>{label}</label>
-          <input
-            id={`key-${name}`}
-            type="password"
-            autocomplete="off"
-            placeholder={placeholder}
-            value={keys[name]}
-            onInput={(e) => {
-              const value = (e.currentTarget as HTMLInputElement).value;
-              setKeys((prev) => ({ ...prev, [name]: value }));
-            }}
-          />
-          {hint && <div class="hint">{hint}</div>}
-        </>
-      ))}
-
-      <button id="save" class="primary" disabled={saving} onClick={() => void save()}>
-        Save
-      </button>
-      <span id="save-status">{saveStatus}</span>
 
       <h2>Embedding status</h2>
       <div id="ai-status">{aiStatus}</div>
