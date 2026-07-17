@@ -31,6 +31,7 @@ export const ITEM_COLUMNS = [
   "published_at AS publishedAt",
   "created_at AS createdAt",
   "deleted_at AS deletedAt",
+  "starred_at AS starredAt",
 ].join(", ");
 
 // Same projection qualified with the saved_items alias, for the FTS join
@@ -104,9 +105,10 @@ export function upsert(db: SqlDatabase, { provider, account, items }: UpsertArgs
     INSERT INTO saved_items
       (provider, account, external_id, url, title, publication, summary, image, kind, duration, collection, poster_name, poster_handle, poster_bio, stats, bookmarked_at, published_at, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    -- deleted_at is deliberately absent from this SET list: a user-deleted
-    -- item that is still saved on the service flows back through upsert on
-    -- every incremental sync, and refreshing its fields must not undelete it.
+    -- deleted_at and starred_at are deliberately absent from this SET list:
+    -- an item that is still saved on the service flows back through upsert on
+    -- every incremental sync, and refreshing its fields must not undelete or
+    -- unstar it.
     ON CONFLICT (provider, account, external_id) DO UPDATE SET
       url = excluded.url,
       title = excluded.title,
@@ -203,13 +205,16 @@ export interface ListArgs {
   provider?: ProviderId | null;
   /** true lists the trash (soft-deleted rows) instead of live items. */
   deleted?: boolean;
+  /** true restricts to starred rows (composes with deleted: a starred item in
+   *  the trash shows in the trash, not the starred view). */
+  starred?: boolean;
   limit?: number;
   offset?: number;
 }
 
 export function list(
   db: SqlDatabase,
-  { provider, deleted = false, limit = 1000, offset = 0 }: ListArgs
+  { provider, deleted = false, starred = false, limit = 1000, offset = 0 }: ListArgs
 ): SavedItem[] {
   // bookmarked_at DESC sorts providers that expose a true save timestamp
   // newest-first; published_at is the content-time fallback. Rows with
@@ -220,7 +225,8 @@ export function list(
   return fetchItems(
     db,
     `SELECT ${ITEM_COLUMNS} FROM saved_items
-     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"} ${provider ? "AND provider = ?" : ""}
+     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"}
+       ${starred ? "AND starred_at IS NOT NULL" : ""} ${provider ? "AND provider = ?" : ""}
      ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ? OFFSET ?`,
     provider ? [provider, limit, offset] : [limit, offset]
   );
@@ -233,6 +239,15 @@ export function setDeleted(
   { id, deleted }: { id: number; deleted: boolean }
 ): { changed: number } {
   db.run("UPDATE saved_items SET deleted_at = ? WHERE id = ?", [deleted ? Date.now() : null, id]);
+  return { changed: db.rows<{ n: number }>("SELECT changes() AS n", [])[0]!.n };
+}
+
+/** Star (or unstar) one item. */
+export function setStarred(
+  db: SqlDatabase,
+  { id, starred }: { id: number; starred: boolean }
+): { changed: number } {
+  db.run("UPDATE saved_items SET starred_at = ? WHERE id = ?", [starred ? Date.now() : null, id]);
   return { changed: db.rows<{ n: number }>("SELECT changes() AS n", [])[0]!.n };
 }
 
@@ -292,11 +307,16 @@ export function providerStats(db: SqlDatabase): ProviderStatsRow[] {
 
 export function count(
   db: SqlDatabase,
-  { provider, deleted = false }: { provider?: ProviderId | null; deleted?: boolean } = {}
+  {
+    provider,
+    deleted = false,
+    starred = false,
+  }: { provider?: ProviderId | null; deleted?: boolean; starred?: boolean } = {}
 ): number {
   return db.rows<{ n: number }>(
     `SELECT COUNT(*) AS n FROM saved_items
-     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"} ${provider ? "AND provider = ?" : ""}`,
+     WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"}
+       ${starred ? "AND starred_at IS NOT NULL" : ""} ${provider ? "AND provider = ?" : ""}`,
     provider ? [provider] : []
   )[0]!.n;
 }

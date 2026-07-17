@@ -56,8 +56,15 @@ export interface BackgroundApi {
    *  options page's enablement toggles. */
   providerStatus(args: Record<string, never>): ProviderStatusRow[];
   /** provider: null means "across all providers" (the UI's "all" tab);
-   *  deleted: true lists the trash (soft-deleted items) instead. */
-  listItems(args: { provider: ProviderId | null; deleted?: boolean; limit?: number; offset?: number }): {
+   *  deleted: true lists the trash (soft-deleted items) instead;
+   *  starred: true restricts to starred items. */
+  listItems(args: {
+    provider: ProviderId | null;
+    deleted?: boolean;
+    starred?: boolean;
+    limit?: number;
+    offset?: number;
+  }): {
     items: SavedItem[];
     total: number;
     meta: ProviderMeta | null;
@@ -66,6 +73,8 @@ export interface BackgroundApi {
   similar(args: { id: number; provider: ProviderId | null }): SavedItem[];
   /** Soft-delete (deleted: true) or restore (false) one item. */
   setItemDeleted(args: { id: number; deleted: boolean }): { changed: number };
+  /** Star (starred: true) or unstar (false) one item. */
+  setItemStarred(args: { id: number; starred: boolean }): { changed: number };
   sync(args: { provider: ProviderId; full?: boolean }): SyncReport;
   syncAll(args: { full?: boolean }): AllSyncReport;
   /** Sync-run visibility for surfaces that didn't start the sync. */
@@ -195,14 +204,19 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
       );
     },
 
-    listItems: async ({ provider, deleted, limit, offset }) => ({
+    listItems: async ({ provider, deleted, starred, limit, offset }) => ({
       items: await db.list({
         provider,
         ...(deleted !== undefined ? { deleted } : {}),
+        ...(starred !== undefined ? { starred } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(offset !== undefined ? { offset } : {}),
       }),
-      total: await db.count({ provider, ...(deleted !== undefined ? { deleted } : {}) }),
+      total: await db.count({
+        provider,
+        ...(deleted !== undefined ? { deleted } : {}),
+        ...(starred !== undefined ? { starred } : {}),
+      }),
       meta: provider ? await getMeta(provider) : null,
     }),
 
@@ -222,6 +236,11 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
       // but "mutations wait for the sync" is one rule instead of two.
       rejectDuringSync();
       return db.setDeleted({ id, deleted });
+    },
+
+    setItemStarred: ({ id, starred }) => {
+      rejectDuringSync(); // same one-rule consistency as setItemDeleted
+      return db.setStarred({ id, starred });
     },
 
     sync: ({ provider, full }) =>
