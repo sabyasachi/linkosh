@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { openDb } from "./helpers/open-db.ts";
-import { upsert, list, search, count, clearItems, knownIds, setDeleted } from "../src/core/db/items.ts";
+import {
+  upsert,
+  list,
+  search,
+  count,
+  clearItems,
+  knownIds,
+  setDeleted,
+  setStarred,
+} from "../src/core/db/items.ts";
 import { initSchema } from "../src/core/db/schema.ts";
 import { storeEmbeddings } from "../src/core/db/embeddings.ts";
 import { ftsQuery } from "../src/core/fts.ts";
@@ -319,19 +328,55 @@ test("upsert refreshes a deleted item's fields without resurrecting it", async (
   db.close();
 });
 
-test("initSchema adds deleted_at to a DB created before the column existed, idempotently", async () => {
+test("initSchema adds deleted_at/starred_at to a DB created before them, idempotently", async () => {
   const db = await openDb();
-  const hasColumn = () =>
+  const hasColumn = (name: string) =>
     db.rows<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM pragma_table_info('saved_items') WHERE name = 'deleted_at'"
+      "SELECT COUNT(*) AS n FROM pragma_table_info('saved_items') WHERE name = ?",
+      [name]
     )[0]!.n;
-  // Simulate a pre-column OPFS DB (nothing else references the column).
+  // Simulate a pre-column OPFS DB (nothing else references these columns).
   db.exec("ALTER TABLE saved_items DROP COLUMN deleted_at");
-  assert.equal(hasColumn(), 0);
+  db.exec("ALTER TABLE saved_items DROP COLUMN starred_at");
+  assert.equal(hasColumn("deleted_at"), 0);
+  assert.equal(hasColumn("starred_at"), 0);
   initSchema(db);
-  assert.equal(hasColumn(), 1);
+  assert.equal(hasColumn("deleted_at"), 1);
+  assert.equal(hasColumn("starred_at"), 1);
   initSchema(db); // re-init on an up-to-date DB is a no-op
-  assert.equal(hasColumn(), 1);
+  assert.equal(hasColumn("deleted_at"), 1);
+  db.close();
+});
+
+test("setStarred filters list/count, composes with deleted, survives upsert refresh", async () => {
+  const db = await openDb();
+  upsert(db, { provider: "hackernews", account: "u", items: [item("a"), item("b"), item("c")] });
+  const idOf = (extId: string) =>
+    db.rows<{ id: number }>("SELECT id FROM saved_items WHERE external_id = ?", [extId])[0]!.id;
+
+  assert.deepEqual(setStarred(db, { id: idOf("a"), starred: true }), { changed: 1 });
+  setStarred(db, { id: idOf("b"), starred: true });
+
+  // Starring hides nothing from the main list; the starred filter narrows it.
+  assert.equal(list(db, {}).length, 3);
+  assert.deepEqual(list(db, { starred: true }).map((r) => r.externalId).sort(), ["a", "b"]);
+  assert.equal(count(db, { starred: true }), 2);
+  assert.ok(list(db, { starred: true })[0]!.starredAt! > 0);
+
+  // A starred item in the trash belongs to the trash, not the starred view.
+  setDeleted(db, { id: idOf("a"), deleted: true });
+  assert.deepEqual(list(db, { starred: true }).map((r) => r.externalId), ["b"]);
+  assert.equal(count(db, { starred: true }), 1);
+  // Restore: the star was kept.
+  setDeleted(db, { id: idOf("a"), deleted: false });
+  assert.equal(count(db, { starred: true }), 2);
+
+  // Re-sync refresh must not unstar (starred_at is outside upsert's SET list).
+  upsert(db, { provider: "hackernews", account: "u", items: [item("a", { title: "refreshed" })] });
+  assert.equal(count(db, { starred: true }), 2);
+
+  assert.deepEqual(setStarred(db, { id: idOf("a"), starred: false }), { changed: 1 });
+  assert.deepEqual(list(db, { starred: true }).map((r) => r.externalId), ["b"]);
   db.close();
 });
 

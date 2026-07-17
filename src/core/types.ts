@@ -78,6 +78,8 @@ export interface SavedItem {
   createdAt: number;
   /** Soft-delete time (epoch ms); null = live. */
   deletedAt: number | null;
+  /** Star/favorite time (epoch ms); null = not starred. */
+  starredAt: number | null;
   kind: string;
   duration: number | null;
   collection: string[];

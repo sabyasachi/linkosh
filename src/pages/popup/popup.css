@@ -154,6 +154,7 @@ li.item a:hover {
 /* Per-row actions ("more like this", delete, restore): siblings of the <a>
    so clicks don't navigate. */
 button.similar,
+button.star,
 button.delete,
 button.restore {
   flex: none;
@@ -166,8 +167,14 @@ button.restore {
 }
 
 button.similar:hover,
+button.star:hover,
 button.restore:hover {
   color: var(--accent);
+}
+
+/* A starred item keeps its filled gold star visible at all times. */
+button.star.on {
+  color: #e5a50a;
 }
 
 button.delete {
@@ -206,17 +213,18 @@ button.undo:hover {
   text-decoration: underline;
 }
 
-/* Header toggle for the Deleted view — unmistakably "on" while the trash is
-   showing (a tinted icon alone read as decoration, not state). */
-button#trash[aria-pressed="true"] {
+/* Header toggles for the filtered views — unmistakably "on" while showing
+   (a tinted icon alone read as decoration, not state). */
+button#trash[aria-pressed="true"],
+button#starred[aria-pressed="true"] {
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);
 }
 
-/* Persistent banner while the trash is open: names the view and carries the
-   explicit way out (the header toggle still works too). */
-#trash-banner {
+/* Persistent banner while a filtered view is open: names the view and carries
+   the explicit way out (the header toggle still works too). */
+.view-banner {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -230,7 +238,7 @@ button#trash[aria-pressed="true"] {
   font-size: 13px;
 }
 
-#trash-banner button {
+.view-banner button {
   border: none;
   background: none;
   padding: 0 2px;
@@ -239,7 +247,7 @@ button#trash[aria-pressed="true"] {
   white-space: nowrap;
 }
 
-#trash-banner button:hover {
+.view-banner button:hover {
   text-decoration: underline;
 }
 
