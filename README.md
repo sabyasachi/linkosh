@@ -230,8 +230,8 @@ stay in your library.
 
 The **Service status** page (linked from that section) shows, per service,
 whether a session cookie is present (so a sync would get past the login
-check), how many items are saved, the newest item's save date, and when the
-last successful sync ran.
+check), how many items are saved, when the newest item was picked up, and when
+the last successful sync ran.
 
 ### Refresh, full sync, and export
 
@@ -263,10 +263,13 @@ Please treat Linkosh as experimental software.
 - Syncing makes requests as your signed-in browser session. Linkosh spaces out
   requests and caps pagination, but unusually heavy use could still trigger a
   temporary rate limit. If that happens, wait a few minutes before retrying.
-- Some services expose the content's publish time but not the time you saved
-  it. Linkosh sorts by save time when available, then publish time, then local
-  import time. Facebook exposes neither, so its items sort by when Linkosh
-  imported them rather than by save or post date.
+- Most services expose the content's publish time but not the time you saved
+  it, so Linkosh sorts the list by when each item was first picked up by a
+  sync: something you just saved appears at the top after the next sync, even
+  if the post itself is old. Within one sync run the service's newest-first
+  order is preserved, so the very first sync still lists your most recent
+  saves on top. Save/publish dates, when a service exposes them, are shown on
+  the items but don't affect the order.
 - Instagram thumbnail URLs expire. A Full sync can refresh them; the original
   post links continue to work.
 - YouTube identifies Shorts from playlist metadata. Older Shorts without the

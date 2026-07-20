@@ -15,7 +15,8 @@ import { parsePage } from "./parse/index.ts";
  *  and upsert nothing. */
 export function ingestRow(
   db: SqlDatabase,
-  row: RawDataRow
+  row: RawDataRow,
+  sortKeyStart?: number
 ): { inserted: number; updated: number; items: number } {
   const parsed = parsePage(row.provider, {
     kind: row.kind,
@@ -26,7 +27,12 @@ export function ingestRow(
   let inserted = 0;
   let updated = 0;
   if (parsed.items.length) {
-    const res = upsert(db, { provider: row.provider, account: row.account, items: parsed.items });
+    const res = upsert(db, {
+      provider: row.provider,
+      account: row.account,
+      items: parsed.items,
+      ...(sortKeyStart !== undefined ? { sortKeyStart } : {}),
+    });
     inserted = res.inserted;
     updated = res.updated;
   }
@@ -42,9 +48,20 @@ function ingestRows(db: SqlDatabase, rowList: RawDataRow[]): IngestReport {
     updated: 0,
     errors: [],
   };
+  // Sort-key cursors reconstructing live-sync pickup order from the archive
+  // (rowList is in id order = original fetch order). A run's keys are
+  // anchored to its *first* page's fetch time and decremented per new item —
+  // never each page's own fetchedAt: later pages of a run hold *older*
+  // content but carry *larger* fetch times, which would invert the list.
+  // page 0 marks a new run; keyed per walk so interleaved captures (HN
+  // stories+comments, YT playlists) don't reset each other's runs.
+  const cursors = new Map<string, number>();
   for (const row of rowList) {
     try {
-      const res = ingestRow(db, row);
+      const walk = `${row.provider}\u0001${row.account}\u0001${row.kind}`;
+      if (row.page === 0 || !cursors.has(walk)) cursors.set(walk, row.fetchedAt);
+      const res = ingestRow(db, row, cursors.get(walk)!);
+      cursors.set(walk, cursors.get(walk)! - res.inserted);
       rawMark(db, { id: row.id, status: "ingested" });
       result.ingested++;
       result.inserted += res.inserted;

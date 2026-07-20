@@ -14,6 +14,7 @@ import * as search from "./search.ts";
 export interface DbApi {
   knownIds(args: { provider: ProviderId; createdBefore?: number }): string[];
   upsert(args: items.UpsertArgs): { inserted: number; updated: number };
+  sortKeyMin(args: Record<string, never>): number | null;
   list(args: items.ListArgs): SavedItem[];
   search(args: items.SearchArgs): SavedItem[];
   setDeleted(args: { id: number; deleted: boolean }): { changed: number };
@@ -59,6 +60,7 @@ export function createDbService(db: SqlDatabase): DbApi {
   return {
     knownIds: (args) => items.knownIds(db, args),
     upsert: (args) => items.upsert(db, args),
+    sortKeyMin: () => items.sortKeyMin(db),
     list: (args) => items.list(db, args),
     search: (args) => items.search(db, args),
     setDeleted: (args) => items.setDeleted(db, args),

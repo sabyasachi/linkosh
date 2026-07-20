@@ -60,9 +60,9 @@ test("upsert keeps prior bookmarked_at and published_at when the new one is null
 });
 
 test("upsert stores 0-valued duration/bookmarkedAt/publishedAt as NULL", async () => {
-  // 0 means "absent" for these numeric fields; a stored 0 would defeat the
-  // COALESCE(bookmarked_at, published_at, 0) list sort and sink the row to
-  // epoch 0. (Regression guard: an earlier TS port used `?? null`, persisting 0.)
+  // 0 means "absent" for these numeric fields — the display layer treats
+  // NULL as "no timestamp", a stored 0 as epoch 0. (Regression guard: an
+  // earlier TS port used `?? null`, persisting 0.)
   const db = await openDb();
   upsert(db, {
     provider: "substack",
@@ -163,41 +163,63 @@ test("knownIds respects the createdBefore cutoff", async () => {
   db.close();
 });
 
-test("list orders by bookmarked_at, then published_at, then created_at; paging is stable", async () => {
+test("list orders by sort_key (created_at for legacy rows); paging is stable", async () => {
   const db = await openDb();
-  const insert = (extId: string, bookmarkedAt: number | null, publishedAt: number | null, createdAt: number) =>
+  const insert = (extId: string, sortKey: number | null, createdAt: number) =>
     db.run(
       `INSERT INTO saved_items
-        (provider, account, external_id, url, bookmarked_at, published_at, created_at)
-        VALUES ('hackernews','u',?,'',?,?,?)`,
-      [extId, bookmarkedAt, publishedAt, createdAt]
+        (provider, account, external_id, url, sort_key, created_at)
+        VALUES ('hackernews','u',?,'',?,?)`,
+      [extId, sortKey, createdAt]
     );
-  insert("bookmark-late", 5000, 1000, 1); // bookmarked_at wins overall
-  insert("bookmark-early", 4000, 9000, 1);
-  insert("published-late", null, 3000, 1);
-  insert("published-early", null, 2000, 1);
-  insert("sync2-a", null, null, 200); // no timestamps: newer sync first, id asc within
-  insert("sync2-b", null, null, 200);
-  insert("sync1-a", null, null, 100);
+  // Two sync runs: run 2's band (5000-) sits above run 1's (3000-); within a
+  // run keys decrement in arrival (newest-first) order. bookmarked_at /
+  // published_at play no part anymore.
+  insert("run2-newest", 5000, 1);
+  insert("run2-older", 4999, 1);
+  insert("run1-newest", 3000, 1);
+  insert("run1-older", 2999, 1);
+  insert("legacy-b", null, 200); // pre-column rows fall back to created_at
+  insert("legacy-a", null, 100);
 
   const order = list(db, {}).map((r) => r.externalId);
   assert.deepEqual(order, [
-    "bookmark-late",
-    "bookmark-early",
-    "published-late",
-    "published-early",
-    "sync2-a",
-    "sync2-b",
-    "sync1-a",
+    "run2-newest",
+    "run2-older",
+    "run1-newest",
+    "run1-older",
+    "legacy-b",
+    "legacy-a",
   ]);
 
   const paged = [
     ...list(db, { limit: 2, offset: 0 }),
     ...list(db, { limit: 2, offset: 2 }),
     ...list(db, { limit: 2, offset: 4 }),
-    ...list(db, { limit: 2, offset: 6 }),
   ].map((r) => r.externalId);
   assert.deepEqual(paged, order);
+  db.close();
+});
+
+test("upsert assigns decrementing sort keys to new items only; conflicts keep theirs", async () => {
+  const db = await openDb();
+  const keys = () =>
+    Object.fromEntries(
+      db.rows<{ external_id: string; sort_key: number }>("SELECT external_id, sort_key FROM saved_items")
+        .map((r) => [r.external_id, r.sort_key])
+    );
+  upsert(db, { provider: "hackernews", account: "u", items: [item("a"), item("b")], sortKeyStart: 1000 });
+  assert.deepEqual(keys(), { a: 1000, b: 999 });
+
+  // Next page of the same run: the caller advanced the cursor by `inserted`.
+  // Known item "b" neither consumes nor changes a key; new items continue
+  // decrementing.
+  upsert(db, { provider: "hackernews", account: "u", items: [item("b"), item("c"), item("d")], sortKeyStart: 998 });
+  assert.deepEqual(keys(), { a: 1000, b: 999, c: 998, d: 997 });
+
+  // A later run with a fresh (higher) start never re-keys known rows.
+  upsert(db, { provider: "hackernews", account: "u", items: [item("a"), item("e")], sortKeyStart: 5000 });
+  assert.deepEqual(keys(), { a: 1000, b: 999, c: 998, d: 997, e: 5000 });
   db.close();
 });
 

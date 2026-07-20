@@ -94,21 +94,28 @@ export interface UpsertArgs {
   provider: ProviderId;
   account: string;
   items: ParsedItem[];
+  /** Sort-key cursor for this batch: new items get sortKeyStart, then
+   *  sortKeyStart - 1, … in item order (arrival order is newest-first, so
+   *  decrementing preserves it); already-known items neither consume nor
+   *  change a key. The caller threads the cursor across a run's pages by
+   *  subtracting the returned `inserted` count. Defaults to Date.now(). */
+  sortKeyStart?: number;
 }
 
-export function upsert(db: SqlDatabase, { provider, account, items }: UpsertArgs): {
+export function upsert(db: SqlDatabase, { provider, account, items, sortKeyStart }: UpsertArgs): {
   inserted: number;
   updated: number;
 } {
   const existing = new Set(knownIds(db, { provider }));
   const stmt = db.prepare(`
     INSERT INTO saved_items
-      (provider, account, external_id, url, title, publication, summary, image, kind, duration, collection, poster_name, poster_handle, poster_bio, stats, bookmarked_at, published_at, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    -- deleted_at and starred_at are deliberately absent from this SET list:
-    -- an item that is still saved on the service flows back through upsert on
-    -- every incremental sync, and refreshing its fields must not undelete or
-    -- unstar it.
+      (provider, account, external_id, url, title, publication, summary, image, kind, duration, collection, poster_name, poster_handle, poster_bio, stats, bookmarked_at, published_at, created_at, sort_key)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    -- deleted_at, starred_at and sort_key are deliberately absent from this
+    -- SET list: an item that is still saved on the service flows back through
+    -- upsert on every incremental sync, and refreshing its fields must not
+    -- undelete or unstar it — and its pickup order (sort_key) is frozen at
+    -- first insert, or a re-walk would shuffle the list.
     ON CONFLICT (provider, account, external_id) DO UPDATE SET
       url = excluded.url,
       title = excluded.title,
@@ -137,10 +144,12 @@ export function upsert(db: SqlDatabase, { provider, account, items }: UpsertArgs
                         THEN saved_items.embedding_model ELSE NULL END
   `);
   const now = Date.now();
+  const keyBase = sortKeyStart ?? now;
   let inserted = 0;
   try {
     db.transaction(() => {
       for (const item of items) {
+        const isNew = !existing.has(item.externalId);
         const prev = db.rows<{ collection: string }>(
           "SELECT collection FROM saved_items WHERE provider = ? AND account = ? AND external_id = ?",
           [provider, account, item.externalId]
@@ -157,10 +166,7 @@ export function upsert(db: SqlDatabase, { provider, account, items }: UpsertArgs
           item.kind ?? "",
           // 0 means "absent" for these numeric fields (no playable length; no
           // exposed save/publish time — epoch 0 is never a real timestamp), so
-          // coerce it to NULL. Load-bearing for bookmarked_at: the list sorts
-          // by COALESCE(bookmarked_at, published_at, 0), and a stored 0 would
-          // defeat the fallback and sink the row to epoch 0. Use `|| null`
-          // (not `?? null`) so 0 — falsy — collapses to NULL like the old
+          // coerce it to NULL with `|| null` (not `?? null`) like the old
           // pipeline did.
           item.duration || null,
           mergeCollections(prev?.collection, item.collection ?? []),
@@ -171,8 +177,11 @@ export function upsert(db: SqlDatabase, { provider, account, items }: UpsertArgs
           item.bookmarkedAt || null,
           item.publishedAt || null,
           now,
+          // Only new rows consume a key (ON CONFLICT never touches sort_key,
+          // so the bound value is inert for known rows).
+          keyBase - inserted,
         ]);
-        if (!existing.has(item.externalId)) {
+        if (isNew) {
           inserted++;
           existing.add(item.externalId);
         }
@@ -216,18 +225,18 @@ export function list(
   db: SqlDatabase,
   { provider, deleted = false, starred = false, limit = 1000, offset = 0 }: ListArgs
 ): SavedItem[] {
-  // bookmarked_at DESC sorts providers that expose a true save timestamp
-  // newest-first; published_at is the content-time fallback. Rows with
-  // neither timestamp fall through to created_at DESC (newer syncs first)
-  // with id ASC preserving the provider's newest-first order within a single
-  // sync batch. The sort is deterministic (id breaks ties), so LIMIT/OFFSET
-  // paging is stable.
+  // sort_key DESC lists items in pickup order — most recently synced-in
+  // first, with each run's internal order preserved (see the schema comment;
+  // most services expose no usable save timestamp, so pickup order is the
+  // only faithful "when did I save this"). created_at covers rows from a DB
+  // predating the column; id ASC keeps the sort deterministic so
+  // LIMIT/OFFSET paging is stable.
   return fetchItems(
     db,
     `SELECT ${ITEM_COLUMNS} FROM saved_items
      WHERE deleted_at IS ${deleted ? "NOT NULL" : "NULL"}
        ${starred ? "AND starred_at IS NOT NULL" : ""} ${provider ? "AND provider = ?" : ""}
-     ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ? OFFSET ?`,
+     ORDER BY COALESCE(sort_key, created_at) DESC, id ASC LIMIT ? OFFSET ?`,
     provider ? [provider, limit, offset] : [limit, offset]
   );
 }
@@ -285,7 +294,7 @@ export function search(db: SqlDatabase, { provider, query, limit = 200 }: Search
       `SELECT ${ITEM_COLUMNS} FROM saved_items s
        WHERE s.deleted_at IS NULL ${starredSql} AND ${provider ? "s.provider = ? AND" : ""}
          (title LIKE ? OR publication LIKE ? OR summary LIKE ? OR collection LIKE ? OR poster_name LIKE ? OR poster_handle LIKE ?)
-       ORDER BY COALESCE(bookmarked_at, published_at, 0) DESC, created_at DESC, id ASC LIMIT ?`,
+       ORDER BY COALESCE(sort_key, created_at) DESC, id ASC LIMIT ?`,
       provider
         ? [provider, like, like, like, like, like, like, limit]
         : [like, like, like, like, like, like, limit]
@@ -297,18 +306,26 @@ export function search(db: SqlDatabase, { provider, query, limit = 200 }: Search
 export interface ProviderStatsRow {
   provider: ProviderId;
   items: number;
-  /** Newest item's save date — MAX over the same COALESCE the list sorts by
-   *  (bookmarked_at, else published_at); null when no row exposes either. */
+  /** Newest item by the list's own sort key — approximately "last picked up"
+   *  (sort_key is anchored to the sync run's start ms). */
   lastItemAt: number | null;
 }
 
 export function providerStats(db: SqlDatabase): ProviderStatsRow[] {
   return db.rows<ProviderStatsRow>(
     `SELECT provider, COUNT(*) AS items,
-            MAX(COALESCE(bookmarked_at, published_at)) AS lastItemAt
+            MAX(COALESCE(sort_key, created_at)) AS lastItemAt
      FROM saved_items WHERE deleted_at IS NULL GROUP BY provider`,
     []
   );
+}
+
+/** Smallest sort_key across the whole table (all providers — keys are
+ *  epoch-ms-anchored and globally comparable), or null on an empty/legacy
+ *  table. The sync layer starts an initial-mode run just below this so a
+ *  retried initial sync keeps decrementing under what already landed. */
+export function sortKeyMin(db: SqlDatabase): number | null {
+  return db.rows<{ min: number | null }>("SELECT MIN(sort_key) AS min FROM saved_items", [])[0]!.min;
 }
 
 export function count(
