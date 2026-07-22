@@ -1,0 +1,58 @@
+{
+  "onResponseReceivedActions": [
+    {
+      "appendContinuationItemsAction": {
+        "continuationItems": [
+          {
+            "playlistVideoRenderer": {
+              "videoId": "cont1",
+              "setVideoId": "SET1",
+              "title": { "runs": [{ "text": "Continuation Video" }] },
+              "shortBylineText": { "simpleText": "Chan" },
+              "lengthSeconds": "120",
+              "menu": {
+                "menuRenderer": {
+                  "topLevelButtons": [
+                    {
+                      "buttonRenderer": {
+                        "command": {
+                          "playlistEditEndpoint": {
+                            "clientActions": [
+                              {
+                                "commandExecutorCommand": {
+                                  "commands": [
+                                    {
+                                      "addRendererToItemSectionAction": {
+                                        "renderer": {
+                                          "playlistVideoRenderer": {
+                                            "videoId": "cont1",
+                                            "title": { "runs": [{ "text": "Continuation Video" }] }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "continuationItemRenderer": {
+              "continuationEndpoint": {
+                "continuationCommand": { "token": "cont-token-2" }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

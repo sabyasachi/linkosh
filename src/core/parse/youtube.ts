@@ -40,18 +40,78 @@ interface LockupViewModel {
   metadata?: { lockupMetadataViewModel?: { title?: TextNode } };
 }
 
-/** Yield every value stored under `key` at any depth. InnerTube nests
- *  renderers unpredictably and the wrapping changes between UI experiments,
- *  so parsing scans for renderer objects instead of hardcoding paths. */
-export function* deepFind(node: unknown, key: string, depth = 0): Generator<unknown> {
+/** Shelf view-models that carry recommendations, never the playlist's own
+ *  rows. Once a playlist's real videos are exhausted, YouTube appends a
+ *  "Recommended videos" section to help you add more — served either as one of
+ *  these shelves (captured 2026-07-20) or as a recommendations-flagged
+ *  itemSectionRenderer (captured 2026-07-22, see isRecommendationSection).
+ *  Nothing inside either may be ingested. */
+const SHELF_KEYS = new Set(["horizontalShelfViewModel", "shelfRenderer", "richShelfRenderer"]);
+
+/** True for the "Recommended videos" itemSectionRenderer YouTube appends below
+ *  a playlist's own videos. Its rows are ordinary playlistVideoRenderers — the
+ *  only thing that marks them as suggestions rather than saved items is the
+ *  section header's titleStyle: ITEM_SECTION_HEADER_TITLE_STYLE_PLAYLIST_RECOMMENDATIONS
+ *  (real playlist rows live in a playlistVideoListRenderer, which has no such
+ *  header). Matched loosely so a style rename to another *RECOMMENDATION* enum
+ *  still excludes them. */
+function isRecommendationSection(section: unknown): boolean {
+  const ts = (section as { header?: { itemSectionHeaderRenderer?: { titleStyle?: string } } })
+    ?.header?.itemSectionHeaderRenderer?.titleStyle;
+  return typeof ts === "string" && ts.includes("RECOMMENDATION");
+}
+
+/** Yield every value stored under `key` at any depth, skipping subtrees whose
+ *  key is in `skip`. InnerTube nests renderers unpredictably and the wrapping
+ *  changes between UI experiments, so parsing scans for renderer objects
+ *  instead of hardcoding paths. */
+export function* deepFind(
+  node: unknown,
+  key: string,
+  skip?: ReadonlySet<string>,
+  depth = 0
+): Generator<unknown> {
   if (!node || typeof node !== "object" || depth > 24) return;
   if (Array.isArray(node)) {
-    for (const item of node) yield* deepFind(item, key, depth + 1);
+    for (const item of node) yield* deepFind(item, key, skip, depth + 1);
     return;
   }
   for (const [k, v] of Object.entries(node)) {
+    if (skip?.has(k)) continue;
     if (k === key) yield v;
-    else yield* deepFind(v, key, depth + 1);
+    else yield* deepFind(v, key, skip, depth + 1);
+  }
+}
+
+/** Yield only the playlist's actual video rows: `playlistVideoRenderer`s that
+ *  are direct elements of a `contents`/`continuationItems` array (the video
+ *  list on initial pages, the appended items on continuation pages).
+ *
+ *  A bare deepFind over the whole payload ingests phantom items, because
+ *  YouTube embeds *copies* of the renderer elsewhere: every row's own menu
+ *  carries a ready-made playlistVideoRenderer inside a playlistEditEndpoint →
+ *  addRendererToItemSectionAction (the row the UI would re-insert on "Add"),
+ *  and the Recommended section builds the same structure for videos that are
+ *  NOT in the playlist — which is how suggestions ended up ingested as saved
+ *  items (captured 2026-07-22). So: never descend into a matched row, and
+ *  never enter a shelf or a recommendation section. */
+function* playlistVideoRows(node: unknown, depth = 0): Generator<PlaylistVideoRenderer> {
+  if (!node || typeof node !== "object" || depth > 24) return;
+  if (Array.isArray(node)) {
+    for (const item of node) yield* playlistVideoRows(item, depth + 1);
+    return;
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (SHELF_KEYS.has(k)) continue;
+    if (k === "itemSectionRenderer" && isRecommendationSection(v)) continue;
+    if ((k === "contents" || k === "continuationItems") && Array.isArray(v)) {
+      for (const el of v) {
+        const row = (el as { playlistVideoRenderer?: PlaylistVideoRenderer } | null)
+          ?.playlistVideoRenderer;
+        if (row) yield row;
+        else yield* playlistVideoRows(el, depth + 1);
+      }
+    } else yield* playlistVideoRows(v, depth + 1);
   }
 }
 
@@ -60,10 +120,48 @@ export function text(t: TextNode | undefined | null): string {
   return t.simpleText || (Array.isArray(t.runs) ? t.runs.map((r) => r.text ?? "").join("") : "") || t.content || "";
 }
 
+/** The token for the next page OF PLAYLIST VIDEOS, or null at the real end.
+ *  Two continuation tokens can coexist and only one is ours: the playlist's own
+ *  "more videos" token sits inside its playlistVideoListRenderer (initial page)
+ *  or beside the real rows in a continuation batch, while a sibling token at the
+ *  sectionList level loads the appended "Recommended videos" section. Following
+ *  that sibling walked the sync straight from the playlist into suggestions
+ *  (captured 2026-07-22), so scope the search to arrays that actually hold real
+ *  rows rather than taking the first token anywhere in the payload. */
 export function nextContinuation(json: unknown): string | null {
-  for (const r of deepFind(json, "continuationItemRenderer")) {
-    const token = (r as { continuationEndpoint?: { continuationCommand?: { token?: string } } })
-      ?.continuationEndpoint?.continuationCommand?.token;
+  // Initial page: the real continuation is the last child of the video list.
+  for (const list of deepFind(json, "playlistVideoListRenderer", SHELF_KEYS)) {
+    const token = tokenIn((list as { contents?: unknown[] })?.contents);
+    if (token) return token;
+  }
+  // Continuation page: a recommendations batch carries an itemSectionRenderer
+  // and no direct rows — only take the token from a batch that appended real
+  // playlistVideoRenderers.
+  for (const action of deepFind(json, "appendContinuationItemsAction", SHELF_KEYS)) {
+    const items = (action as { continuationItems?: unknown[] })?.continuationItems;
+    if (!Array.isArray(items)) continue;
+    const hasRealRows = items.some(
+      (el) => (el as { playlistVideoRenderer?: { videoId?: string } })?.playlistVideoRenderer?.videoId
+    );
+    if (hasRealRows) {
+      const token = tokenIn(items);
+      if (token) return token;
+    }
+  }
+  return null;
+}
+
+/** Token of a continuationItemRenderer that is a direct element of `arr`. */
+function tokenIn(arr: unknown[] | undefined): string | null {
+  if (!Array.isArray(arr)) return null;
+  for (const el of arr) {
+    const token = (
+      el as {
+        continuationItemRenderer?: {
+          continuationEndpoint?: { continuationCommand?: { token?: string } };
+        };
+      }
+    )?.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token;
     if (token) return token;
   }
   return null;
@@ -123,8 +221,7 @@ export function parseVideos(
   fetchedAt: number | undefined
 ): ParsedItem[] {
   const results: ParsedItem[] = [];
-  for (const found of deepFind(json, "playlistVideoRenderer")) {
-    const r = found as PlaylistVideoRenderer;
+  for (const r of playlistVideoRows(json)) {
     if (!r?.videoId || r.isPlayable === false) continue; // deleted/private stubs
     const overlays = Array.isArray(r.thumbnailOverlays) ? r.thumbnailOverlays : [];
     const isShort =

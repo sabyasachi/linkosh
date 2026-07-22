@@ -28,7 +28,39 @@
                                       { "url": "https://i.ytimg.com/336.jpg", "width": 336 }
                                     ]
                                   },
-                                  "thumbnailOverlays": []
+                                  "thumbnailOverlays": [],
+                                  "menu": {
+                                    "menuRenderer": {
+                                      "topLevelButtons": [
+                                        {
+                                          "buttonRenderer": {
+                                            "command": {
+                                              "playlistEditEndpoint": {
+                                                "clientActions": [
+                                                  {
+                                                    "commandExecutorCommand": {
+                                                      "commands": [
+                                                        {
+                                                          "addRendererToItemSectionAction": {
+                                                            "renderer": {
+                                                              "playlistVideoRenderer": {
+                                                                "videoId": "abc123",
+                                                                "title": { "simpleText": "A Long Video" }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      ]
+                                                    }
+                                                  }
+                                                ]
+                                              }
+                                            }
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
                                 }
                               },
                               {

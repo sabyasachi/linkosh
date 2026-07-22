@@ -161,6 +161,56 @@ test("youtube playlist page: per-playlist ids, short detection, unplayable stubs
   assert.equal(hasNext, true);
 });
 
+test("youtube continuation page: real rows appended directly, menu copies ignored", () => {
+  // A real continuation batch (captured 2026-07-22): the next page of the
+  // playlist's own videos arrives as direct playlistVideoRenderer children of
+  // continuationItems, each row's menu embedding a duplicate renderer (the
+  // re-insert row for the Add button) that must not be counted twice. The
+  // trailing continuationItemRenderer is the playlist's real "more" token.
+  const { items, cursor, hasNext } = parsePage("youtube", {
+    kind: "items",
+    body: fixture("youtube/playlist-continuation-page.json"),
+    context: { playlistId: "PL1", collection: "bengali" },
+    fetchedAt: Date.parse("2026-07-08T12:00:00Z"),
+  });
+  assert.deepEqual(items.map((i) => i.externalId), ["cont1"]); // no menu duplicate
+  assert.equal(cursor, "cont-token-2");
+  assert.equal(hasNext, true);
+});
+
+test("youtube playlist end: sectionList recommendations token is not followed", () => {
+  // A playlist whose videos fit on one page (captured 2026-07-22): its own
+  // continuation is exhausted, so the only token left is a sibling at the
+  // sectionList level that loads the appended "Recommended videos" section.
+  // Following it pulled suggestions into the DB — the real end must report
+  // hasNext:false while still returning the playlist's actual videos.
+  const { items, cursor, hasNext } = parsePage("youtube", {
+    kind: "items",
+    body: fixture("youtube/playlist-end-recommendations-token.json"),
+    context: { playlistId: "PL1", collection: "music" },
+    fetchedAt: Date.parse("2026-07-08T12:00:00Z"),
+  });
+  assert.deepEqual(items.map((i) => i.externalId), ["real1", "real2"]);
+  assert.equal(cursor, null);
+  assert.equal(hasNext, false);
+});
+
+test("youtube recommended tail page: suggestion itemSection and its token ignored", () => {
+  // Once followed, the recommendations continuation returns a
+  // recommendations-flagged itemSectionRenderer of videos NOT in the playlist
+  // (captured 2026-07-22, music). Neither its rows nor its own "more" token may
+  // be ingested — the batch carries no real playlistVideoRenderer rows.
+  const { items, cursor, hasNext } = parsePage("youtube", {
+    kind: "items",
+    body: fixture("youtube/playlist-recommended-tail.json"),
+    context: { playlistId: "PL1", collection: "music" },
+    fetchedAt: Date.parse("2026-07-08T12:00:00Z"),
+  });
+  assert.deepEqual(items, []);
+  assert.equal(cursor, null);
+  assert.equal(hasNext, false);
+});
+
 test("youtube playlists feed: both renderer dialects parsed", () => {
   const { items, playlists, hasNext } = parsePage("youtube", {
     kind: "playlists",

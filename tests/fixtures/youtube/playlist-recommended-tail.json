@@ -1,0 +1,45 @@
+{
+  "onResponseReceivedActions": [
+    {
+      "appendContinuationItemsAction": {
+        "continuationItems": [
+          {
+            "itemSectionRenderer": {
+              "header": {
+                "itemSectionHeaderRenderer": {
+                  "title": { "runs": [{ "text": "Recommended videos" }] },
+                  "titleStyle": "ITEM_SECTION_HEADER_TITLE_STYLE_PLAYLIST_RECOMMENDATIONS"
+                }
+              },
+              "contents": [
+                {
+                  "playlistVideoRenderer": {
+                    "videoId": "rec1",
+                    "title": { "simpleText": "Suggested One" },
+                    "shortBylineText": { "simpleText": "Some Channel" },
+                    "lengthSeconds": "200"
+                  }
+                },
+                {
+                  "playlistVideoRenderer": {
+                    "videoId": "rec2",
+                    "title": { "simpleText": "Suggested Two" },
+                    "shortBylineText": { "simpleText": "Other Channel" },
+                    "lengthSeconds": "300"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "continuationItemRenderer": {
+              "continuationEndpoint": {
+                "continuationCommand": { "token": "recs-more-token" }
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
