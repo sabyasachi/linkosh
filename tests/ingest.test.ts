@@ -127,6 +127,52 @@ test("reingest is idempotent and re-runs ingested rows (the pipeline-changed pat
   db.close();
 });
 
+test("replay reconstructs sort-key bands from each run's first-page fetch time", async () => {
+  const db = await openDb();
+  const post = (id: number) => ({
+    post: {
+      id,
+      title: `Post ${id}`,
+      canonical_url: `https://x.substack.com/p/${id}`,
+      publishedBylines: [{ name: "Author" }],
+      post_date: "2026-01-01T00:00:00.000Z",
+      type: "post",
+    },
+  });
+  const body = (ids: number[]) => JSON.stringify({ items: ids.map(post), nextCursor: null });
+  const store = (page: number, ids: number[], fetchedAt: number) =>
+    rawStore(db, {
+      provider: "substack",
+      account: "u",
+      page: { kind: "items", url: `/saved?p=${page}`, page, body: body(ids) },
+      externalIds: ids.map((id) => `post:${id}`),
+      fetchedAt,
+    });
+  // Run 1 (initial): two pages, newest-first; page 2 fetched later but holds
+  // older content. Run 2 (delta): one page, much later.
+  store(0, [4, 3], 100000);
+  store(1, [2, 1], 105000);
+  store(0, [5], 900000);
+
+  ingestPending(db);
+  const rows = db.rows<{ external_id: string; sort_key: number }>(
+    "SELECT external_id, sort_key FROM saved_items ORDER BY sort_key DESC"
+  );
+  // Each run's band is anchored at its page-0 fetch time and decrements per
+  // new item — page 2's larger fetchedAt must not lift older items above.
+  assert.deepEqual(
+    rows.map((r) => [r.external_id, r.sort_key]),
+    [
+      ["post:5", 900000],
+      ["post:4", 100000],
+      ["post:3", 99999],
+      ["post:2", 99998],
+      ["post:1", 99997],
+    ]
+  );
+  db.close();
+});
+
 test("rawKnownIds flattens crawl-time ids up to the fetch-time cutoff", async () => {
   const db = await openDb();
   const page = { kind: "items", url: "", page: 0 } as const;

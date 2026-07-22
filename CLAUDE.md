@@ -95,7 +95,7 @@ Fetch paths (cookies, bot detection, rate-limit/login shapes, queryId/feature/do
 
 ## Conventions
 
-- `bookmarked_at` holds save time when the service exposes it, `published_at` the content time (often estimated; 0/NULL when nothing is exposed) — each parser comments which. The list sorts by `COALESCE(bookmarked_at, published_at, 0)`.
+- `bookmarked_at` holds save time when the service exposes it, `published_at` the content time (often estimated; 0/NULL when nothing is exposed) — each parser comments which; both are display data only. The list sorts by `COALESCE(sort_key, created_at) DESC, id ASC` — pickup order: each sync run gets a band anchored at its start ms (initial-mode runs continue below the table minimum instead, so interrupted first syncs heal), decremented per new item so the service's newest-first page order is preserved; `sort_key` is frozen on upsert conflict.
 - `poster*` is the content's author, *not* the saving user. Never duplicate it into `title`: same-author items would share a "title", polluting FTS ranking and clustering embeddings (the embedded row text is title+publication+summary — poster is deliberately excluded, see rowText in core/ai/orchestrator.ts).
 - Parsers emit the tightened `ParsedItem`: `collection` is always `string[]`, `stats` always `Record<string, string>` — normalization lives in parsers, not the DB layer.
 - Comments explain API contracts, workarounds and non-obvious constraints (with dates for captured values); match that density in provider/parser code.

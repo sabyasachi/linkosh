@@ -327,9 +327,11 @@ test("providerStatus reports login probe, item count, last item date and sync wa
 
   const after = (await svc.providerStatus({})).find((r) => r.id === "substack")!;
   assert.equal(after.items, 1);
-  // The fixture post carries post_date 2026-01-01 → published_at.
-  assert.equal(after.lastItemAt, Date.parse("2026-01-01T00:00:00.000Z"));
-  assert.ok(after.syncedAt !== null && after.syncedAt > 0);
+  // lastItemAt is the pickup time (sort_key, anchored to the run's start) —
+  // not the fixture's post_date, which is display data only.
+  assert.ok(after.lastItemAt !== null && after.lastItemAt <= Date.now());
+  assert.ok(after.syncedAt !== null && after.lastItemAt >= after.syncedAt - 60_000);
+  assert.ok(after.syncedAt > 0);
   db.close();
 });
 

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { openDb } from "./helpers/open-db.ts";
 import { asyncDbApi } from "./helpers/async-db.ts";
-import { count, setDeleted } from "../src/core/db/items.ts";
+import { count, list, setDeleted } from "../src/core/db/items.ts";
 import { ingestPending } from "../src/core/ingest.ts";
 import { createSync } from "../src/core/sync.ts";
 import { ProviderError } from "../src/core/errors.ts";
@@ -109,6 +109,74 @@ test("incremental sync stops at the first page with nothing unseen", async () =>
   const fullRes = await h3.sync.syncProvider("substack", { full: true });
   assert.equal(third.stats.fetched, 2);
   assert.equal(fullRes.updated, 4);
+  db.close();
+});
+
+const listedIds = (db: Awaited<ReturnType<typeof openDb>>) =>
+  list(db, {}).map((r) => r.externalId);
+
+test("sort keys: one run shares one decrementing band, so the list is newest-first", async () => {
+  const db = await openDb();
+  const { provider } = scriptedProvider([pageBody([5, 4], "c1"), pageBody([3, 2], "c2"), pageBody([1], null)]);
+  const { sync } = harness(provider, db);
+  await sync.syncProvider("substack");
+
+  // Keys fall monotonically in arrival order across ALL pages of the run —
+  // the cursor is threaded, never restarted per page.
+  const rows = db.rows<{ external_id: string; sort_key: number }>(
+    "SELECT external_id, sort_key FROM saved_items ORDER BY id"
+  );
+  assert.deepEqual(rows.map((r) => r.external_id), ["post:5", "post:4", "post:3", "post:2", "post:1"]);
+  for (let i = 1; i < rows.length; i++) assert.equal(rows[i]!.sort_key, rows[0]!.sort_key - i);
+  assert.deepEqual(listedIds(db), ["post:5", "post:4", "post:3", "post:2", "post:1"]);
+  db.close();
+});
+
+test("sort keys: a delta run lands above earlier runs; an old item bookmarked late tops the list", async () => {
+  const db = await openDb();
+  const first = scriptedProvider([pageBody([3, 2], "c1"), pageBody([1], null)]);
+  const h1 = harness(first.provider, db);
+  await h1.sync.syncProvider("substack");
+
+  // The user bookmarks old post 0 — the service lists it newest-first on
+  // page 1 next to new post 4. Delta band > everything stored, arrival order
+  // kept within it.
+  await new Promise((r) => setTimeout(r, 2)); // distinct Date.now() band
+  const second = scriptedProvider([pageBody([4, 0, 3], "c1"), pageBody([2, 1], null)]);
+  const h2 = harness(second.provider, db);
+  h2.meta.set("substack", h1.meta.get("substack")!);
+  await h2.sync.syncProvider("substack");
+
+  assert.deepEqual(listedIds(db), ["post:4", "post:0", "post:3", "post:2", "post:1"]);
+  db.close();
+});
+
+test("sort keys: an interrupted initial sync's retry decrements below what landed", async () => {
+  const db = await openDb();
+  // First attempt dies after page 1: the newest items {4, 3} land.
+  const first = scriptedProvider(
+    [pageBody([4, 3], "c1"), pageBody([2, 1], null)],
+    { failAfterPage: 0 }
+  );
+  const h1 = harness(first.provider, db);
+  const res1 = await h1.sync.syncProvider("substack");
+  assert.equal(res1.status, "partial");
+
+  // Retry (still no watermark → initial mode): re-walks from the top; known
+  // items keep their keys, the older gap items {2, 1} continue below the
+  // table minimum — never above the first attempt's rows.
+  const second = scriptedProvider([pageBody([4, 3], "c1"), pageBody([2, 1], null)]);
+  const h2 = harness(second.provider, db);
+  const res2 = await h2.sync.syncProvider("substack");
+  assert.equal(res2.status, "ok");
+  assert.equal(res2.inserted, 2);
+
+  assert.deepEqual(listedIds(db), ["post:4", "post:3", "post:2", "post:1"]);
+  const keys = db.rows<{ external_id: string; sort_key: number }>(
+    "SELECT external_id, sort_key FROM saved_items ORDER BY sort_key DESC"
+  );
+  assert.deepEqual(keys.map((r) => r.external_id), ["post:4", "post:3", "post:2", "post:1"]);
+  for (let i = 1; i < keys.length; i++) assert.ok(keys[i]!.sort_key < keys[i - 1]!.sort_key);
   db.close();
 });
 

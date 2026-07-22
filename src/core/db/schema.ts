@@ -25,6 +25,11 @@ export const SCHEMA = `
     bookmarked_at INTEGER,                   -- when the user saved it (epoch ms), rarely exposed
     published_at  INTEGER,                   -- when the content appeared (epoch ms), often estimated
     created_at    INTEGER NOT NULL,          -- row insert time — the incremental-sync watermark
+    sort_key      INTEGER,                   -- pickup order, the list's sole sort key: the sync
+                                             -- run's start ms minus the count of new items already
+                                             -- landed that run (pages arrive newest-first, so
+                                             -- decrementing preserves their order); frozen on
+                                             -- conflict like created_at
     deleted_at    INTEGER,                   -- soft delete (epoch ms); NULL = live. Soft, not DELETE:
                                              -- the row must stay in knownIds or the next sync would
                                              -- treat it as unseen and resurrect it
@@ -94,7 +99,7 @@ export const FTS_SCHEMA = `
  *  migration story. */
 export function initSchema(db: SqlDatabase): void {
   db.exec(SCHEMA);
-  for (const column of ["deleted_at", "starred_at"]) {
+  for (const column of ["deleted_at", "starred_at", "sort_key"]) {
     const present = db.rows<{ n: number }>(
       "SELECT COUNT(*) AS n FROM pragma_table_info('saved_items') WHERE name = ?",
       [column]

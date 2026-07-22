@@ -27,10 +27,16 @@ import { parsePage } from "./parse/index.ts";
 export interface SyncDb {
   knownIds(args: { provider: ProviderId; createdBefore?: number }): Promise<string[]>;
   rawKnownIds(args: { provider: ProviderId; fetchedBefore?: number }): Promise<string[]>;
-  upsert(args: { provider: ProviderId; account: string; items: ParsedItem[] }): Promise<{
+  upsert(args: {
+    provider: ProviderId;
+    account: string;
+    items: ParsedItem[];
+    sortKeyStart?: number;
+  }): Promise<{
     inserted: number;
     updated: number;
   }>;
+  sortKeyMin(args: Record<string, never>): Promise<number | null>;
   rawStore(args: {
     provider: ProviderId;
     account: string;
@@ -106,6 +112,23 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
       ]);
     }
 
+    // Sort-key cursor for the whole run: each new item takes the current
+    // value and decrements it, threaded across every page so keys fall
+    // monotonically in arrival order (newest-first) for the entire run —
+    // never restarted per page.
+    //   delta mode (a successful sync exists): start at now — runs are
+    //   separated by far more milliseconds than they contain items, so this
+    //   run's band lands above every earlier one.
+    //   initial mode (no watermark yet): start just below the table's
+    //   smallest key, so a retry of an interrupted initial sync — which
+    //   re-walks from the top and lands the older gap pages — keeps
+    //   decrementing under what already landed instead of stacking the
+    //   oldest items on top. No persisted state needed.
+    // Accepted edge: a retried *delta* run gets a fresh (higher) band, so its
+    // gap items sort just above the failed attempt's — confined to that run.
+    const landedMin = lastGoodSync ? null : await db.sortKeyMin({});
+    let sortKeyCursor = landedMin !== null ? landedMin - 1 : Date.now();
+
     let inserted = 0;
     let updated = 0;
     let captured = 0;
@@ -150,7 +173,13 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
         });
         captured++;
       } else if (kept.length) {
-        const res = await db.upsert({ provider: providerId, account, items: kept });
+        const res = await db.upsert({
+          provider: providerId,
+          account,
+          items: kept,
+          sortKeyStart: sortKeyCursor,
+        });
+        sortKeyCursor -= res.inserted; // only new items consume keys
         inserted += res.inserted;
         updated += res.updated;
       }
