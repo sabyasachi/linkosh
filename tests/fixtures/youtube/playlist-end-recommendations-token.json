@@ -1,0 +1,55 @@
+{
+  "contents": {
+    "twoColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "content": {
+              "sectionListRenderer": {
+                "contents": [
+                  {
+                    "itemSectionRenderer": {
+                      "contents": [
+                        {
+                          "playlistVideoListRenderer": {
+                            "contents": [
+                              {
+                                "playlistVideoRenderer": {
+                                  "videoId": "real1",
+                                  "setVideoId": "SET1",
+                                  "title": { "simpleText": "Real One" },
+                                  "shortBylineText": { "simpleText": "Chan" },
+                                  "lengthSeconds": "100"
+                                }
+                              },
+                              {
+                                "playlistVideoRenderer": {
+                                  "videoId": "real2",
+                                  "setVideoId": "SET2",
+                                  "title": { "simpleText": "Real Two" },
+                                  "shortBylineText": { "simpleText": "Chan" },
+                                  "lengthSeconds": "150"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  {
+                    "continuationItemRenderer": {
+                      "continuationEndpoint": {
+                        "continuationCommand": { "token": "recs-loader-token" }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}
