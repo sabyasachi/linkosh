@@ -49,6 +49,28 @@ export function formatPoster(item: Pick<ParsedItem, "posterName" | "posterHandle
   return handle ? `@${handle}` : "";
 }
 
+/** Compact, deterministic labels for Hacker News's image-less list rows.
+ *  Recognize only HN's established title prefixes and recurring jobs threads;
+ *  ordinary stories deliberately stay HN instead of inheriting a random-looking
+ *  first letter from their title. */
+export function hackerNewsBadge(item: {
+  provider?: string;
+  kind?: string;
+  title?: string | null;
+}): string {
+  if (item.provider !== "hackernews") return "";
+  if (item.kind === "comment") return "COMMENT";
+
+  const title = (item.title || "").trim();
+  if (/^ask hn:\s*(?:who is hiring|who wants to be hired|freelancer\?|seeking freelancer\b)/i.test(title)) {
+    return "JOBS";
+  }
+  if (/^ask hn(?:\s*:|\s+-|\s+—|\s*$)/i.test(title)) return "ASK";
+  if (/^show hn(?:\s*:|\s+-|\s+—|\s*$)/i.test(title)) return "SHOW";
+  if (/^launch hn(?:\s*:|\s+-|\s+—|\s*$)/i.test(title)) return "LAUNCH";
+  return "HN";
+}
+
 export function formatRelativeDate(ts: number | null | undefined, now: number = Date.now()): string {
   if (!ts) return "";
   const then = new Date(ts).getTime();
