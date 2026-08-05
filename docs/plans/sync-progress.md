@@ -62,7 +62,7 @@ While the core prepares a provider, and then before its first network page arriv
 Started 2s ago
 
 ◌ Connecting to YouTube                               3 of 7
-Started 4s ago
+Waiting for the first page · active 4s ago
 ```
 
 Capture mode replaces item counts with pages archived:
@@ -76,10 +76,13 @@ If a provider fails and the all-services run continues, retain a concise issue l
 the next active provider:
 
 ```text
-◌ Syncing Facebook                                    6 of 7
+◌ Connecting to Facebook                              6 of 7
 Waiting for the first page · active 3s ago
 X needs login · continuing with remaining services
 ```
+
+Use these headings consistently: `Preparing <service>` during core setup, `Connecting to <service>`
+until its first page completes, and `Syncing <service>` after at least one page completes.
 
 ### Progress semantics
 
@@ -249,7 +252,6 @@ export type SyncRunStatus =
       running: true;
       scope: ProviderId | "all";
       startedAt: number;
-      stopping: boolean;
       active: RunningProviderProgress | null;
       completed: CompletedProviderProgress[];
     };
@@ -257,10 +259,11 @@ export type SyncRunStatus =
 
 `active: null` means every scheduled provider has completed and the core is finishing aggregate
 work. Under the preserved immediate-release stop lifecycle, stopping does not leave a running
-snapshot to poll. The existing `stopping` field remains API-compatible, but the UI must not rely on
-it after `syncStop` returns. `completed` has at most seven entries, so returning it in each polling
-response is cheap and makes reattached surfaces reconstructable while the background still owns the
-run.
+snapshot to poll. Remove the existing `stopping` field from `SyncRunStatus`: because `syncStop`
+aborts and clears `running` in one synchronous block, `syncStatus` can only ever return that field as
+`false`. Stopping presentation is explicitly local state instead. `completed` has at most seven
+entries, so returning it in each polling response is cheap and makes reattached surfaces
+reconstructable while the background still owns the run.
 
 Completed progress carries the same user-visible `SyncReport.error` already shown after a sync. It
 must not intentionally add stack traces, account identifiers, raw pages, or parser context. Generic
@@ -291,9 +294,13 @@ Update [types.ts](../../src/core/types.ts) and [sync.ts](../../src/core/sync.ts)
    `provider-complete` once, then return it. Emit completion after `setMeta` for a successful run.
 6. Make `SyncOptions.include` order authoritative in `syncAllProviders`: when present, iterate those
    provider ids in order and resolve each through the registry; otherwise retain registry order.
-   This makes the background's displayed sequence and the core's execution sequence one contract.
-   The observer already propagates because `syncAllProviders` passes `opts` wholesale to
-   `syncProvider`; preserve and test that behavior rather than adding redundant forwarding code.
+   De-duplicate ids by first occurrence and skip ids with no registry entry, preserving today's
+   defensive behavior instead of letting `syncProvider` throw and abort the whole run. Update the
+   `SyncOptions.include` comment in [types.ts](../../src/core/types.ts) to define all three semantics:
+   ordered execution, de-duplication, and unknown-id skipping. This makes the background's displayed
+   sequence and the core's execution sequence one contract. The observer already propagates because
+   `syncAllProviders` passes `opts` wholesale to `syncProvider`; preserve and test that behavior
+   rather than adding redundant forwarding code.
 7. Keep the existing stop-between-providers check before each provider.
 8. Treat observer failures as non-fatal and add a contract comment explaining why.
 
@@ -310,19 +317,25 @@ Update [background-service.ts](../../src/ext/background-service.ts):
 2. Expand the single-flight `running` record with that sequence, an `active` snapshot, and completed
    rows. Initialize `active` to the first provider in `preparing` phase with zero counters.
 3. Pass an observer closure to core through `SyncOptions.onProgress`:
-   - `provider-start` changes the already-selected provider to `connecting`, resets its counters,
-     and updates `lastActivityAt`;
+   - `provider-start` normally changes the already-selected provider to `connecting`, resets its
+     counters, and updates `lastActivityAt`; defensively, if the event id does not match `active`,
+     re-select it through `sequence.indexOf(event.providerId)` before applying the event, or ignore
+     the event if the id is absent from the stored sequence;
    - `page-complete` changes phase to `fetching` and copies `pagesCompleted`, `sourcePage`, kind, and
      the cumulative item counters;
    - `provider-complete` appends/replaces its completed row, then selects the next provider in
-     `preparing` phase only when the stop token is not aborted; otherwise it sets `active: null`;
+     `preparing` phase, or sets `active: null` after the final provider;
    - completion of the final provider also sets `active: null`, allowing the UI to say
      `Finishing sync…` during the final aggregate DB count instead of contradicting itself.
-4. Guard every observer update with `if (running !== run) return`. `syncStop` deliberately releases
-   the lock immediately, so a stopped zombie run must not overwrite a newer run’s progress.
+4. Guard every observer update with `if (running !== run) return` before interpreting the event.
+   `syncStop` deliberately releases the lock immediately, so callbacks from an aborted zombie return
+   at this guard and cannot set `active: null`, advance providers, fill the progress track, or
+   overwrite a newer run.
 5. Return fresh plain objects/arrays from `syncStatus`; do not leak mutable internal references.
-6. Keep `syncStatus` read-only and cheap—no DB calls, provider probes, or preference reads.
-7. Continue clearing the run in `finally` only when it is still the same run.
+6. Remove the dead `stopping` property from the running status response; `syncStop`'s own return
+   value and UI-local state carry the stop acknowledgement.
+7. Keep `syncStatus` read-only and cheap—no DB calls, provider probes, or preference reads.
+8. Continue clearing the run in `finally` only when it is still the same run.
 
 If no providers are enabled, preserve the current empty all-sync result and avoid constructing an
 invalid active snapshot. `syncAll` can complete immediately without ever exposing `running: true`
@@ -344,7 +357,7 @@ Update [app.tsx](../../src/pages/popup/app.tsx):
    The coordinator:
    - polls `api.syncStatus({})` about every 800 ms regardless of the current
      list/search/similar view;
-   - updates `syncProgress`, `syncing`, and `stopping` from the background snapshot;
+   - applies running snapshots to `syncProgress` and `syncing`; `stopping` remains local UI state;
    - retains the existing guarded `listItems` refresh only while the view owner is `list`;
    - after refreshing a live list, calls `listStatus(res.total, res.meta, "list")` so the factual
      saved-item count and last-successful-sync time stay current beneath the separate banner;
@@ -352,7 +365,9 @@ Update [app.tsx](../../src/pages/popup/app.tsx):
 3. Give the coordinator two explicit ownership modes:
    - **local start:** an idle poll is not terminal until the initiating `sync`/`syncAll` RPC settles.
      This covers a status request that races ahead of `beginSync`, a run that completes before the
-     first poll, and the immediate-idle behavior after Stop. The RPC's `finally` stops polling.
+     first poll, and the immediate-idle behavior after Stop. An idle snapshot in this mode updates
+     no UI state: do not clear `syncProgress`, `syncing`, or the `Starting…`/`Stopping…` banner. The
+     RPC's `finally` is the authoritative terminator and stops polling.
    - **reattached:** the caller has already observed `running: true`; the next idle snapshot is
      terminal, so stop polling and refresh the view.
 4. Use the same polling implementation for a locally started run and `watchSync`, parameterized by
@@ -390,7 +405,9 @@ Update [popup.css](../../src/pages/popup/popup.css) and, only where necessary,
   truncate provider names or errors.
 - Add the thin provider-level track below the text. Its determinate width is completed/count; an
   active accent segment animates within the remaining track. When `active` is null but the run is
-  still registered, fill all scheduled provider segments and show `Finishing sync…`.
+  still registered after normal provider completion, fill all scheduled provider segments and show
+  `Finishing sync…`. Late abort events never reach this state because the stale-run guard rejects
+  them first.
 - Add a neutral waiting treatment after 15 seconds and a restrained warning treatment after 60
   seconds. Do not reuse `#status.error` red unless an actual provider error has occurred.
 - Add reduced-motion rules and keep dark-mode behavior token-driven.
@@ -401,10 +418,10 @@ Update [popup.css](../../src/pages/popup/popup.css) and, only where necessary,
   methods because they already expose `BackgroundApi` generically.
 - The options-page **Full sync** action can remain visually unchanged for this scope. A simultaneously
   open home page will still display its progress through `syncStatus`.
-- The background API change is additive to the running branch. Existing tests assert its current
-  fields individually, so they do not require mechanical exact-shape updates; add the progress
-  assertions described below. There is no persisted schema, manifest, worker protocol, or database
-  migration.
+- The progress fields are additive, but the provably dead running-status `stopping` field is removed.
+  Update the one existing field assertion and the `watchSync` branch that reads it; stop behavior
+  continues through `syncStop` plus local state. There is no persisted schema, manifest, worker
+  protocol, or database migration.
 
 ## Automated tests
 
@@ -425,6 +442,8 @@ Extend [sync.test.ts](../../tests/sync.test.ts):
 - An observer that throws does not change the sync report or watermark behavior.
 - `syncAllProviders({ include })` emits events only for included providers and uses the `include`
   array's order even when registry insertion order differs.
+- `syncAllProviders({ include })` skips unknown ids, syncs a duplicated id only once at its first
+  position, and continues to later valid providers without throwing.
 
 ### Background service tests
 
@@ -433,14 +452,17 @@ providers:
 
 - Status transitions from idle → first provider preparing → connecting → first page processed →
   first provider complete/second provider preparing → connecting → final provider complete with
-  `active: null` → idle.
+  `active: null` → idle. To make the second-provider `preparing` snapshot observable, gate a setup
+  dependency before `provider-start`—for example a per-provider prefs `get(metaKey)` wrapper or the
+  DB's initial `sortKeyMin`/known-id work—not the existing provider gate inside `fetchItems`.
 - Active ordinal and count reflect the enabled provider sequence; disabled providers are excluded.
 - Repeated `syncStatus` calls return snapshots that cannot mutate internal state.
 - A partial/failed provider is retained in `completed` while the next provider runs, including
   `needsLogin` without an error stack.
 - Stop returns status to idle and releases the lock as today; late progress from the old run cannot
-  alter a newly started run. Do not add an impossible assertion for a durable running/stopping
-  snapshot.
+  alter a newly started run. Remove the existing assertion that running status has
+  `stopping: false`; the field is deleted rather than pretending a durable running/stopping snapshot
+  is observable.
 - Explicit single-provider sync reports index/count as `1/1`.
 - Capture-mode progress reports captured-page totals.
 
@@ -473,8 +495,10 @@ below rather than introducing a UI dependency.
 8. Trigger a known login failure for one provider in an all-services run. The banner should name the
    issue, continue to the next provider, and the final status should retain the error.
 9. Turn on capture mode and confirm the banner speaks in captured pages rather than new items.
-10. Click Sync and force the first status poll to return idle before the background reports running;
-    the locally started coordinator must keep polling until the initiating RPC settles.
+10. In the controlled dev harness (not the live-extension smoke), script or instrument the Runtime
+    so the first status poll returns idle before the background reports running. Confirm the local
+    coordinator leaves the starting banner/state untouched and keeps polling until the initiating
+    RPC settles.
 11. Click Stop during a multi-page provider. On the starting surface, confirm the stopping copy and
     neutral final report; on a reattached surface, confirm the banner clears when status returns idle
     and the factual list refreshes. In both cases, landed items remain and the next incremental sync

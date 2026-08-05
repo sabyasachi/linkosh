@@ -17,6 +17,7 @@ import type {
   ProviderMeta,
   RawPage,
   SyncOptions,
+  SyncProgressEvent,
   SyncReport,
 } from "./types.ts";
 import { ProviderError } from "./errors.ts";
@@ -70,6 +71,16 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Progress is presentation/telemetry only. A broken observer must never
+ *  fail provider work, suppress a watermark, or alter the returned report. */
+function emitProgress(observer: SyncOptions["onProgress"], event: SyncProgressEvent): void {
+  try {
+    observer?.(event);
+  } catch {
+    // Deliberately ignored — see contract above.
+  }
+}
+
 /** Thrown out of onPage when the stop token aborts — unwinds the provider's
  *  walk at its next page boundary with zero provider changes (providers just
  *  propagate it like any fetch failure). */
@@ -88,7 +99,7 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
   // little more than maxItems across those.
   async function syncProvider(
     providerId: ProviderId,
-    { full = false, captureRaw = false, maxItems = 0, stop }: SyncOptions = {}
+    { full = false, captureRaw = false, maxItems = 0, stop, onProgress }: SyncOptions = {}
   ): Promise<SyncReport> {
     const provider = providers[providerId];
     if (!provider) throw new Error(`Unknown provider: ${providerId}`); // programmer error, not a sync outcome
@@ -133,6 +144,7 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
     let updated = 0;
     let captured = 0;
     let itemCount = 0; // distinct items collected this run (for the maxItems cap)
+    let pagesCompleted = 0;
     let error: unknown = null;
     const seen = new Set<string>(); // de-dup exact item+collection repeats across overlapping pages
 
@@ -187,11 +199,25 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
       // so the provider stops paging (the same signal the incremental stop
       // rule uses), no provider changes needed.
       itemCount += kept.length;
+      pagesCompleted++;
+      emitProgress(onProgress, {
+        type: "page-complete",
+        providerId,
+        at: Date.now(),
+        kind: rawPage.kind,
+        pagesCompleted,
+        sourcePage: rawPage.page,
+        inserted,
+        updated,
+        captured,
+        processed: itemCount,
+      });
       const unseenOut = maxItems && itemCount >= maxItems ? 0 : unseen;
       return { ...parsed, items: kept, unseen: unseenOut };
     };
 
     let stopped = false;
+    emitProgress(onProgress, { type: "provider-start", providerId, at: Date.now() });
     try {
       await provider.fetchItems({ knownIds, onPage });
       // A provider can finish its walk without calling onPage again after the
@@ -213,27 +239,30 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
 
     // Stopped runs share the failure invariant: setMeta is skipped, so the
     // untouched watermark makes the next incremental sync re-cover the gap.
+    let report: SyncReport;
     if (stopped) {
       if (inserted === 0 && updated === 0 && captured === 0) {
-        return { ...counts, status: "failed", error: "Sync stopped", needsLogin: false, stopped: true };
+        report = { ...counts, status: "failed", error: "Sync stopped", needsLogin: false, stopped: true };
+      } else {
+        onSynced?.(providerId); // landed pages still need embeddings
+        report = { ...counts, status: "partial", error: "Sync stopped", needsLogin: false, stopped: true };
       }
-      onSynced?.(providerId); // landed pages still need embeddings
-      return { ...counts, status: "partial", error: "Sync stopped", needsLogin: false, stopped: true };
-    }
-
-    if (error) {
+    } else if (error) {
       const needsLogin = error instanceof ProviderError ? error.needsLogin : false;
       if (inserted === 0 && updated === 0 && captured === 0) {
-        return { ...counts, status: "failed", error: errorText(error), needsLogin };
+        report = { ...counts, status: "failed", error: errorText(error), needsLogin };
+      } else {
+        onSynced?.(providerId); // partial sync: some pages landed
+        report = { ...counts, status: "partial", error: errorText(error), needsLogin };
       }
-      onSynced?.(providerId); // partial sync: some pages landed
-      return { ...counts, status: "partial", error: errorText(error), needsLogin };
+    } else {
+      const meta: ProviderMeta = { syncedAt: Date.now() };
+      await setMeta(providerId, meta);
+      onSynced?.(providerId);
+      report = { ...counts, status: "ok", syncedAt: meta.syncedAt };
     }
-
-    const meta: ProviderMeta = { syncedAt: Date.now() };
-    await setMeta(providerId, meta);
-    onSynced?.(providerId);
-    return { ...counts, status: "ok", syncedAt: meta.syncedAt };
+    emitProgress(onProgress, { type: "provider-complete", providerId, at: Date.now(), report });
+    return report;
   }
 
   // Sync every provider in turn. One provider failing (e.g. not logged in)
@@ -241,9 +270,10 @@ export function createSync({ providers, db, getMeta, setMeta, onSynced }: Create
   // any joined error display themselves.
   async function syncAllProviders(opts: SyncOptions = {}): Promise<AllSyncReport> {
     const reports: SyncReport[] = [];
-    for (const provider of Object.values(providers)) {
-      if (!provider) continue;
-      if (opts.include && !opts.include.includes(provider.id)) continue; // disabled by the user
+    const ordered = opts.include
+      ? [...new Set(opts.include)].map((id) => providers[id]).filter((p): p is Provider => Boolean(p))
+      : Object.values(providers).filter((p): p is Provider => Boolean(p));
+    for (const provider of ordered) {
       if (opts.stop?.aborted) break; // stop between providers; finished reports stand
       reports.push(await syncProvider(provider.id, opts));
     }

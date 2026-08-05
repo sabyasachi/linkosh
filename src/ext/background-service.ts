@@ -8,6 +8,7 @@ import type {
   AllSyncReport,
   IngestReport,
   OrchestratorStatus,
+  PageKind,
   Provider,
   ProviderId,
   ProviderMeta,
@@ -15,6 +16,7 @@ import type {
   SearchMode,
   SearchResult,
   SyncReport,
+  SyncProgressEvent,
 } from "../core/types.ts";
 import type { AiApi } from "../core/ai/api.ts";
 import type { DbWorkerApi } from "../core/db/service.ts";
@@ -29,9 +31,40 @@ const TEST_MODE_LIMIT = 100;
 
 /** What syncStatus reports — enough for any UI surface (popup, page.html,
  *  dev harness) to reattach to a sync it didn't start. */
+export interface RunningProviderProgress {
+  providerId: ProviderId;
+  index: number;
+  count: number;
+  phase: "preparing" | "connecting" | "fetching";
+  kind?: PageKind;
+  pagesCompleted: number;
+  sourcePage?: number;
+  inserted: number;
+  updated: number;
+  captured: number;
+  processed: number;
+  lastActivityAt: number;
+}
+
+export interface CompletedProviderProgress {
+  providerId: ProviderId;
+  status: SyncReport["status"];
+  inserted: number;
+  updated: number;
+  captured: number;
+  error?: string;
+  needsLogin?: boolean;
+}
+
 export type SyncRunStatus =
   | { running: false }
-  | { running: true; scope: ProviderId | "all"; startedAt: number; stopping: boolean };
+  | {
+      running: true;
+      scope: ProviderId | "all";
+      startedAt: number;
+      active: RunningProviderProgress | null;
+      completed: CompletedProviderProgress[];
+    };
 
 /** One provider's row on the status page: user enablement, a cookie-based
  *  login probe, and store/sync stats. */
@@ -156,19 +189,100 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
   // double injected-tab traffic. The button's disabled state is per-popup
   // only; this is the hard guarantee across popup + page.html + reopened
   // popups.
-  let running: { controller: AbortController; scope: ProviderId | "all"; startedAt: number } | null = null;
+  interface RunningSync {
+    controller: AbortController;
+    scope: ProviderId | "all";
+    startedAt: number;
+    sequence: ProviderId[];
+    active: RunningProviderProgress | null;
+    completed: CompletedProviderProgress[];
+  }
+  let running: RunningSync | null = null;
 
-  const beginSync = (scope: ProviderId | "all") => {
+  const preparing = (providerId: ProviderId, index: number, count: number, at: number): RunningProviderProgress => ({
+    providerId,
+    index,
+    count,
+    phase: "preparing",
+    pagesCompleted: 0,
+    inserted: 0,
+    updated: 0,
+    captured: 0,
+    processed: 0,
+    lastActivityAt: at,
+  });
+
+  const beginSync = (scope: ProviderId | "all", sequence: ProviderId[]) => {
     if (running) throw new Error("A sync is already running");
-    const run = { controller: new AbortController(), scope, startedAt: Date.now() };
+    const startedAt = Date.now();
+    const run: RunningSync = {
+      controller: new AbortController(),
+      scope,
+      startedAt,
+      sequence,
+      active: sequence[0] ? preparing(sequence[0], 1, sequence.length, startedAt) : null,
+      completed: [],
+    };
     running = run; // set synchronously — no await between the guard and here
     return run;
   };
 
-  const runSync = async <T>(scope: ProviderId | "all", go: (stop: AbortSignal) => Promise<T>): Promise<T> => {
-    const run = beginSync(scope);
+  const observe = (run: RunningSync, event: SyncProgressEvent) => {
+    // Stop releases the lock immediately and a new run may claim it before
+    // the old provider unwinds. Zombie progress must never touch either run.
+    if (running !== run) return;
+    const position = run.sequence.indexOf(event.providerId);
+    if (position < 0) return;
+
+    if (event.type === "provider-complete") {
+      const report = event.report;
+      const row: CompletedProviderProgress = {
+        providerId: event.providerId,
+        status: report.status,
+        inserted: report.inserted,
+        updated: report.updated,
+        captured: report.captured,
+        ...(report.status === "ok" ? {} : { error: report.error, needsLogin: report.needsLogin }),
+      };
+      const existing = run.completed.findIndex((item) => item.providerId === event.providerId);
+      if (existing < 0) run.completed.push(row);
+      else run.completed[existing] = row;
+      const next = run.sequence[position + 1];
+      run.active = next ? preparing(next, position + 2, run.sequence.length, event.at) : null;
+      return;
+    }
+
+    if (!run.active || run.active.providerId !== event.providerId) {
+      run.active = preparing(event.providerId, position + 1, run.sequence.length, event.at);
+    }
+    if (event.type === "provider-start") {
+      run.active = { ...preparing(event.providerId, position + 1, run.sequence.length, event.at), phase: "connecting" };
+    } else {
+      run.active = {
+        providerId: event.providerId,
+        index: position + 1,
+        count: run.sequence.length,
+        phase: "fetching",
+        kind: event.kind,
+        pagesCompleted: event.pagesCompleted,
+        sourcePage: event.sourcePage,
+        inserted: event.inserted,
+        updated: event.updated,
+        captured: event.captured,
+        processed: event.processed,
+        lastActivityAt: event.at,
+      };
+    }
+  };
+
+  const runSync = async <T>(
+    scope: ProviderId | "all",
+    sequence: ProviderId[],
+    go: (stop: AbortSignal, onProgress: (event: SyncProgressEvent) => void) => Promise<T>
+  ): Promise<T> => {
+    const run = beginSync(scope, sequence);
     try {
-      return await go(run.controller.signal);
+      return await go(run.controller.signal, (event) => observe(run, event));
     } finally {
       // syncStop may have freed the lock (and a new sync claimed it) while
       // this walk was still unwinding — only clear our own registration.
@@ -244,16 +358,20 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
     },
 
     sync: ({ provider, full }) =>
-      runSync(provider, async (stop) => sync.syncProvider(provider, { ...(await syncOptions(full)), stop })),
-
-    syncAll: ({ full }) =>
-      runSync("all", async (stop) =>
-        sync.syncAllProviders({
-          ...(await syncOptions(full)),
-          include: (await enabledProviders()).map((p) => p.id),
-          stop,
-        })
+      runSync(provider, [provider], async (stop, onProgress) =>
+        sync.syncProvider(provider, { ...(await syncOptions(full)), stop, onProgress })
       ),
+
+    syncAll: async ({ full }) => {
+      // This exact ordered array is both the displayed sequence and core's
+      // authoritative include order, keeping ordinals coupled to execution.
+      const sequence = (await enabledProviders()).map((p) => p.id);
+      const options = await syncOptions(full);
+      if (!sequence.length) return sync.syncAllProviders({ ...options, include: sequence });
+      return runSync("all", sequence, (stop, onProgress) =>
+        sync.syncAllProviders({ ...options, include: sequence, stop, onProgress })
+      );
+    },
 
     syncStatus: () =>
       running
@@ -261,7 +379,8 @@ export function createBackgroundService({ providers, db, ai, prefs }: Background
             running: true,
             scope: running.scope,
             startedAt: running.startedAt,
-            stopping: running.controller.signal.aborted,
+            active: running.active ? { ...running.active } : null,
+            completed: running.completed.map((row) => ({ ...row })),
           }
         : { running: false },
 

@@ -7,13 +7,15 @@ import { h, Fragment } from "../../vendor/preact/preact.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "../../vendor/preact/hooks.js";
 import { formatPoster, formatSynced, hackerNewsCounts, metaParts } from "../../core/format.ts";
 import { FTS_OPERATORS } from "../../core/fts.ts";
-import type { ProviderId, ProviderMeta, SavedItem, SearchMode, SyncReport } from "../../core/types.ts";
+import type { PageKind, ProviderId, ProviderMeta, SavedItem, SearchMode, SyncReport } from "../../core/types.ts";
+import type { SyncRunStatus } from "../../ext/background-service.ts";
 import type { Runtime } from "./runtime.ts";
 
 const ALL = "all"; // pseudo provider id: search/list across every service
 const PAGE_SIZE = 200; // items fetched per list request (infinite scroll)
 
 type ProviderChoice = ProviderId | typeof ALL;
+type RunningSyncStatus = Extract<SyncRunStatus, { running: true }>;
 
 interface Status {
   text: string;
@@ -27,6 +29,126 @@ interface Status {
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+const PAGE_KIND_LABELS: Record<PageKind, string> = {
+  items: "saved items",
+  stories: "stories",
+  comments: "comments",
+  collections: "collections",
+  playlists: "playlists",
+  connection: "saved items",
+};
+
+function shortDuration(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function joinNames(names: string[]): string {
+  if (names.length < 2) return names[0] ?? "";
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names.at(-1)}`;
+}
+
+function SyncProgressBanner({
+  syncing,
+  stopping,
+  progress,
+  providerLabels,
+  now,
+}: {
+  syncing: boolean;
+  stopping: boolean;
+  progress: RunningSyncStatus | null;
+  providerLabels: ReadonlyMap<ProviderId, string>;
+  now: number;
+}) {
+  if (!syncing) return null;
+  const active = progress?.active ?? null;
+  const label = active ? providerLabels.get(active.providerId) || active.providerId : "";
+  const ageMs = active ? Math.max(0, now - active.lastActivityAt) : 0;
+  const waiting = ageMs >= 15_000;
+  const longWait = ageMs >= 60_000;
+  const heading = stopping
+    ? "Stopping after the current page…"
+    : !progress
+      ? "Starting sync…"
+      : !active
+        ? "Finishing sync…"
+        : `${active.phase === "preparing" ? "Preparing" : active.phase === "connecting" ? "Connecting to" : "Syncing"} ${label}`;
+  const ordinal = active && active.count > 1 ? `${active.index} of ${active.count}` : "";
+  let detail = "Waiting for the background service";
+  let accessibleDetail = detail;
+  if (progress && !active) detail = "All scheduled services processed";
+  if (progress && !active) accessibleDetail = detail;
+  else if (active?.phase === "preparing") {
+    detail = `Started ${shortDuration(now - progress!.startedAt)} ago`;
+    accessibleDetail = "Provider setup started";
+  } else if (active?.phase === "connecting") {
+    const activity = waiting
+      ? `waiting ${shortDuration(ageMs)}`
+      : ageMs < 1_000
+        ? "active now"
+        : `active ${shortDuration(ageMs)} ago`;
+    detail = `Waiting for the first page · ${activity}`;
+    accessibleDetail = "Waiting for the first page";
+  } else if (active) {
+    const latest = active.kind === undefined ? "" : ` · latest: ${PAGE_KIND_LABELS[active.kind]} page ${(active.sourcePage ?? 0) + 1}`;
+    const activity = waiting ? `waiting ${shortDuration(ageMs)}` : ageMs < 1_000 ? "active now" : `active ${shortDuration(ageMs)} ago`;
+    detail = active.captured > 0
+      ? `Captured ${active.captured} ${active.captured === 1 ? "page" : "pages"}${latest} · ${activity}`
+      : `Processed ${active.pagesCompleted} ${active.pagesCompleted === 1 ? "page" : "pages"}${latest} · ${active.inserted} new · ${activity}`;
+    accessibleDetail = active.captured > 0
+      ? `Captured ${active.captured} ${active.captured === 1 ? "page" : "pages"}${latest}`
+      : `Processed ${active.pagesCompleted} ${active.pagesCompleted === 1 ? "page" : "pages"}${latest} · ${active.inserted} new`;
+  }
+
+  const completed = progress?.completed ?? [];
+  const issues = completed
+    .filter((item) => item.status !== "ok")
+    .map((item) => {
+      const name = providerLabels.get(item.providerId) || item.providerId;
+      return item.needsLogin ? `${name} needs login` : `${name}: ${item.error || item.status}`;
+    });
+  const successes = completed
+    .filter((item) => item.status === "ok")
+    .map((item) => providerLabels.get(item.providerId) || item.providerId);
+  const completedLine = issues.length
+    ? `${issues.join(" · ")}${active ? " · continuing with remaining services" : ""}`
+    : successes.length && active
+      ? `${joinNames(successes)} complete`
+      : "";
+  const count = active?.count ?? (progress ? Math.max(1, completed.length) : 1);
+  const finished = completed.length;
+  const finishedWidth = progress ? `${Math.min(100, (finished / count) * 100)}%` : "0%";
+  const activeLeft = `${Math.min(100, (finished / count) * 100)}%`;
+  const activeWidth = progress && active ? `${100 / count}%` : "0%";
+  const assistive = [heading, ordinal, accessibleDetail, completedLine, longWait ? "Still waiting — Stop keeps fetched items." : ""]
+    .filter(Boolean)
+    .join(". ");
+
+  return (
+    <div class={`sync-progress${waiting ? " waiting" : ""}${longWait ? " long-wait" : ""}`} role="status">
+      <span class="sr-only">{assistive}</span>
+      <div aria-hidden="true">
+        <div class="sync-progress-heading">
+          <span><span class="sync-spinner">◌</span> {heading}</span>
+          {ordinal && <span class="sync-ordinal">{ordinal}</span>}
+        </div>
+        <div class="sync-progress-detail">{detail}</div>
+        {completedLine && <div class="sync-progress-completed">{completedLine}</div>}
+        {longWait && <div class="sync-progress-warning">Still waiting — Stop keeps fetched items.</div>}
+        <div class="sync-track">
+          <span class="sync-track-finished" style={{ width: finishedWidth }} />
+          <span class="sync-track-active" style={{ left: activeLeft, width: activeWidth }} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Thumbnail({ item }: { item: SavedItem }) {
@@ -147,6 +269,8 @@ export function App({ runtime }: { runtime: Runtime }) {
   const [searchMode, setSearchMode] = useState<SearchMode>("fts");
   const [syncing, setSyncing] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<RunningSyncStatus | null>(null);
+  const [progressClock, setProgressClock] = useState(Date.now());
   const [showSearchRow, setShowSearchRow] = useState(false);
   const [trash, setTrash] = useState(false);
   const [starView, setStarView] = useState(false);
@@ -181,6 +305,7 @@ export function App({ runtime }: { runtime: Runtime }) {
   searchModeRef.current = searchMode;
   const stoppingRef = useRef(false);
   stoppingRef.current = stopping;
+  const coordinatorStopRef = useRef<() => void>(() => {});
   // refreshView is defined below in the sync section; the delete callbacks
   // above it reach the latest version through this ref.
   const refreshViewRef = useRef<() => Promise<void>>(async () => {});
@@ -285,7 +410,7 @@ export function App({ runtime }: { runtime: Runtime }) {
         // popup instance that has since closed) — reattach instead of showing
         // an idle Sync button over a live sync.
         const st = await api.syncStatus({}).catch(() => null);
-        if (st?.running) void watchSync();
+        if (st?.running) void watchSync(st);
       } catch (e) {
         setStatus({ text: errorText(e), error: true });
       }
@@ -524,35 +649,6 @@ export function App({ runtime }: { runtime: Runtime }) {
 
   // ---------- sync ----------
 
-  // Pages are saved to the DB as a sync fetches them, so re-render the list
-  // periodically to show progress while the sync runs. Only a "list" view in
-  // the current generation is updated — a search or "more like this" started
-  // mid-sync must not be clobbered every 800 ms.
-  const startSyncPoll = useCallback(() => {
-    const poll = setInterval(() => {
-      void (async () => {
-        if (viewRef.current !== "list") return;
-        const gen = generationRef.current;
-        const res = await api
-          .listItems({
-            provider: providerRef.current === ALL ? null : providerRef.current,
-            limit: Math.max(PAGE_SIZE, offsetRef.current),
-            offset: 0,
-          })
-          .catch(() => null);
-        if (!res || gen !== generationRef.current || viewRef.current !== "list") return;
-        offsetRef.current = res.items.length;
-        totalRef.current = res.total;
-        setItems(res.items);
-        setHasMore(res.items.length < res.total);
-        setStatus({
-          text: stoppingRef.current ? "Stopping…" : `Syncing… ${res.total} items in database so far`,
-        });
-      })();
-    }, 800);
-    return () => clearInterval(poll);
-  }, [api]);
-
   // Post-sync: refresh whatever the user is looking at instead of
   // unconditionally replacing it with the list (a query typed mid-sync used
   // to keep its text but lose its results). "similar" is left untouched —
@@ -571,11 +667,85 @@ export function App({ runtime }: { runtime: Runtime }) {
   }, [loadItems, runSearch]);
   refreshViewRef.current = refreshView;
 
+  // One non-overlapping coordinator serves both locally-started and
+  // reattached runs. Progress polling is view-independent; live list writes
+  // remain guarded so searches and similar/filtered views are never replaced.
+  const startSyncCoordinator = useCallback(
+    (mode: "local" | "reattached", initial?: RunningSyncStatus) => {
+      coordinatorStopRef.current();
+      let active = true;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      if (initial) {
+        setSyncProgress(initial);
+        setSyncing(true);
+      }
+      const stop = () => {
+        active = false;
+        clearTimeout(timer);
+      };
+      coordinatorStopRef.current = stop;
+
+      const poll = async () => {
+        const snapshot = await api.syncStatus({}).catch(() => null);
+        if (!active) return;
+        if (snapshot === null) {
+          // A transient status-RPC failure says nothing about run ownership;
+          // keep the current banner and try again without overlapping calls.
+        } else if (snapshot.running) {
+          setSyncProgress(snapshot);
+          setSyncing(true);
+          if (viewRef.current === "list") {
+            const gen = generationRef.current;
+            const res = await api
+              .listItems({
+                provider: providerRef.current === ALL ? null : providerRef.current,
+                limit: Math.max(PAGE_SIZE, offsetRef.current),
+                offset: 0,
+              })
+              .catch(() => null);
+            if (active && res && gen === generationRef.current && viewRef.current === "list") {
+              offsetRef.current = res.items.length;
+              totalRef.current = res.total;
+              setItems(res.items);
+              setMeta(res.meta);
+              setHasMore(res.items.length < res.total);
+              listStatus(res.total, res.meta, "list");
+            }
+          }
+        } else if (mode === "reattached") {
+          stop();
+          setSyncProgress(null);
+          setSyncing(false);
+          const stoppedHere = stoppingRef.current;
+          setStopping(false);
+          await refreshView();
+          if (stoppedHere) setStatus({ text: "Stop requested · fetched items were kept" });
+          return;
+        }
+        if (active) timer = setTimeout(() => void poll(), 800);
+      };
+      void poll();
+      return stop;
+    },
+    [api, listStatus, refreshView]
+  );
+
+  useEffect(() => {
+    if (!syncing) return;
+    setProgressClock(Date.now());
+    const clock = setInterval(() => setProgressClock(Date.now()), 1000);
+    return () => clearInterval(clock);
+  }, [syncing]);
+
+  useEffect(() => () => coordinatorStopRef.current(), []);
+
   const doSync = useCallback(
     async () => {
+      const startedAt = Date.now();
       setSyncing(true);
-      setStatus({ text: "Checking for new saved items…" });
-      const stopPoll = startSyncPoll();
+      setStopping(false);
+      setSyncProgress(null);
+      const stopPoll = startSyncCoordinator("local");
 
       try {
         // Scope is pinned here, at click time — a dropdown change mid-sync
@@ -598,16 +768,19 @@ export function App({ runtime }: { runtime: Runtime }) {
           .map((r) => `${providerLabels.get(r.providerId) || r.providerId}: ${r.error}`)
           .join(" · ");
         const captured = report.captured > 0 ? report.captured : undefined;
+        const elapsed = shortDuration(Date.now() - startedAt);
         // In capture mode nothing lands in the list — the raw archive grew instead.
         const outcome =
           captured !== undefined
-            ? `Captured ${captured} raw pages (items unchanged — use “Ingest raw” to apply)`
-            : `${scopeLabel}: ${report.inserted} new · ${report.total} total · ${
-                wasStopped ? "stopped" : "synced just now"
-              }`;
+            ? wasStopped
+              ? `Captured ${captured} raw pages · stopped after ${elapsed} · fetched pages were kept`
+              : `Captured ${captured} raw pages in ${elapsed} (items unchanged — use “Ingest raw” to apply)`
+            : wasStopped
+              ? `${scopeLabel}: ${report.inserted} new · ${report.total} total · stopped after ${elapsed} · fetched items were kept`
+              : `${scopeLabel}: ${report.inserted} new · ${report.total} total · synced in ${elapsed}`;
         setStatus(
           error
-            ? { text: `${outcome}, then stopped: ${error}`, error: true }
+            ? { text: `${outcome} · ${error}`, error: true }
             : { text: outcome, similar: viewRef.current === "similar" }
         );
       } catch (e) {
@@ -616,11 +789,12 @@ export function App({ runtime }: { runtime: Runtime }) {
         setStatus({ text: errorText(e), error: true });
       } finally {
         stopPoll();
+        setSyncProgress(null);
         setSyncing(false);
         setStopping(false);
       }
     },
-    [api, refreshView, startSyncPoll, providerLabels]
+    [api, refreshView, startSyncCoordinator, providerLabels]
   );
 
   // Cooperative stop: the running walk finishes its current page, keeps
@@ -639,24 +813,13 @@ export function App({ runtime }: { runtime: Runtime }) {
   // Reattach to a sync this surface didn't start (popup reopened mid-sync, or
   // page.html open next to the popup): reflect the running state, show
   // progress, and refresh when the background reports it finished.
-  const watchSync = useCallback(async () => {
-    setSyncing(true);
-    setStatus({ text: "Syncing…" });
-    const stopPoll = startSyncPoll();
-    try {
-      for (;;) {
-        await new Promise((resolve) => setTimeout(resolve, 800));
-        const st = await api.syncStatus({}).catch(() => null);
-        if (!st?.running) break;
-        if (st.stopping) setStopping(true);
-      }
-    } finally {
-      stopPoll();
-      setSyncing(false);
+  const watchSync = useCallback(
+    async (initial: RunningSyncStatus) => {
       setStopping(false);
-    }
-    await refreshView();
-  }, [api, refreshView, startSyncPoll]);
+      startSyncCoordinator("reattached", initial);
+    },
+    [startSyncCoordinator]
+  );
 
   // ---------- render ----------
 
@@ -729,6 +892,14 @@ export function App({ runtime }: { runtime: Runtime }) {
           )}
         </div>
       </header>
+
+      <SyncProgressBanner
+        syncing={syncing}
+        stopping={stopping}
+        progress={syncProgress}
+        providerLabels={providerLabels}
+        now={progressClock}
+      />
 
       {/* Persistent while a filtered view is open — the header toggle alone is
           too subtle a cue for which view is showing (and how to leave it). */}

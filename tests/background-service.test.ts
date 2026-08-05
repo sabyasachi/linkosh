@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { openDb } from "./helpers/open-db.ts";
 import { asyncDbApi } from "./helpers/async-db.ts";
 import { createMemoryPrefs } from "../src/core/prefs.ts";
+import { ProviderError } from "../src/core/errors.ts";
 import { createBackgroundService } from "../src/ext/background-service.ts";
 import type { AiApi } from "../src/core/ai/api.ts";
 import type { DbWorkerApi } from "../src/core/db/service.ts";
@@ -123,12 +124,28 @@ test("syncStatus reports idle → running (with scope and startedAt) → idle", 
   assert.deepEqual(await svc.syncStatus({}), { running: false });
 
   const run = svc.sync({ provider: "substack" });
+  const preparing = await svc.syncStatus({});
+  assert.ok(preparing.running);
+  assert.deepEqual(
+    preparing.active && [preparing.active.providerId, preparing.active.index, preparing.active.count, preparing.active.phase],
+    ["substack", 1, 1, "preparing"]
+  );
   await landed.promise;
   const during = await svc.syncStatus({});
   assert.ok(during.running);
   assert.equal(during.scope, "substack");
   assert.ok(during.startedAt > 0);
-  assert.equal(during.stopping, false);
+  assert.deepEqual(
+    during.active && {
+      providerId: during.active.providerId,
+      index: during.active.index,
+      count: during.active.count,
+      phase: during.active.phase,
+      pagesCompleted: during.active.pagesCompleted,
+      inserted: during.active.inserted,
+    },
+    { providerId: "substack", index: 1, count: 1, phase: "fetching", pagesCompleted: 1, inserted: 1 }
+  );
 
   gate.resolve();
   await run;
@@ -143,6 +160,169 @@ test("syncAll reports scope 'all'", async () => {
   await landed.promise;
   const during = await svc.syncStatus({});
   assert.ok(during.running && during.scope === "all");
+  gate.resolve();
+  await run;
+  db.close();
+});
+
+test("syncAll exposes reconstructable provider transitions in enabled order", async () => {
+  const db = await openDb();
+  const setupGate = deferred();
+  const preparingReached = deferred();
+  const providerGate = deferred();
+  const connectingReached = deferred();
+  const aggregateGate = deferred();
+  const finishingReached = deferred();
+  const basePrefs = createMemoryPrefs();
+  const prefs = {
+    ...basePrefs,
+    async get(key: Parameters<typeof basePrefs.get>[0]) {
+      if (key === "meta:hackernews") {
+        preparingReached.resolve();
+        await setupGate.promise;
+      }
+      return basePrefs.get(key);
+    },
+  } as typeof basePrefs;
+  const baseDb = dbClient(db);
+  const client: Client<DbWorkerApi> = {
+    ...baseDb,
+    async count(args) {
+      if (args.provider === undefined || args.provider === null) {
+        finishingReached.resolve();
+        await aggregateGate.promise;
+      }
+      return baseDb.count(args);
+    },
+  };
+  const first: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      await onPage("tester", { kind: "items", url: "/first", page: 0, body: pageBody([1]) });
+      return { account: "tester" };
+    },
+  };
+  const second: Provider = {
+    id: "hackernews",
+    label: "Hacker News",
+    async fetchItems() {
+      connectingReached.resolve();
+      await providerGate.promise;
+      return { account: "tester" };
+    },
+  };
+  const svc = createBackgroundService({
+    providers: { substack: first, hackernews: second },
+    db: client,
+    ai: aiStub,
+    prefs,
+  });
+
+  const run = svc.syncAll({});
+  await preparingReached.promise;
+  let status = await svc.syncStatus({});
+  assert.ok(status.running);
+  assert.deepEqual(status.active && [status.active.providerId, status.active.index, status.active.count, status.active.phase], [
+    "hackernews",
+    2,
+    2,
+    "preparing",
+  ]);
+  assert.deepEqual(status.completed.map((row) => [row.providerId, row.status]), [["substack", "ok"]]);
+
+  // Returned snapshots are copies: callers cannot mutate the live run.
+  status.active!.pagesCompleted = 999;
+  status.completed.length = 0;
+  const untouched = await svc.syncStatus({});
+  assert.ok(untouched.running);
+  assert.equal(untouched.active?.pagesCompleted, 0);
+  assert.equal(untouched.completed.length, 1);
+
+  setupGate.resolve();
+  await connectingReached.promise;
+  status = await svc.syncStatus({});
+  assert.ok(status.running);
+  assert.equal(status.active?.phase, "connecting");
+
+  providerGate.resolve();
+  await finishingReached.promise;
+  status = await svc.syncStatus({});
+  assert.ok(status.running);
+  assert.equal(status.active, null);
+  assert.deepEqual(status.completed.map((row) => row.providerId), ["substack", "hackernews"]);
+
+  aggregateGate.resolve();
+  await run;
+  assert.deepEqual(await svc.syncStatus({}), { running: false });
+  db.close();
+});
+
+test("capture-mode status reports archived pages instead of inserted rows", async () => {
+  const { provider, gate, landed } = gatedProvider();
+  const db = await openDb();
+  const svc = createBackgroundService({
+    providers: { substack: provider },
+    db: dbClient(db),
+    ai: aiStub,
+    prefs: createMemoryPrefs({ captureRaw: true }),
+  });
+  const run = svc.sync({ provider: "substack" });
+  await landed.promise;
+  const status = await svc.syncStatus({});
+  assert.ok(status.running);
+  assert.deepEqual(
+    status.active && { captured: status.active.captured, inserted: status.active.inserted, pages: status.active.pagesCompleted },
+    { captured: 1, inserted: 0, pages: 1 }
+  );
+  await svc.syncStop({});
+  gate.resolve();
+  await run;
+  db.close();
+});
+
+test("a login failure stays in completed progress while syncAll continues", async () => {
+  const db = await openDb();
+  const gate = deferred();
+  const started = deferred();
+  const failed: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems() {
+      throw new ProviderError("Session expired", { needsLogin: true });
+    },
+  };
+  const next: Provider = {
+    id: "hackernews",
+    label: "Hacker News",
+    async fetchItems() {
+      started.resolve();
+      await gate.promise;
+      return { account: "tester" };
+    },
+  };
+  const svc = createBackgroundService({
+    providers: { substack: failed, hackernews: next },
+    db: dbClient(db),
+    ai: aiStub,
+    prefs: createMemoryPrefs(),
+  });
+  const run = svc.syncAll({});
+  await started.promise;
+  const status = await svc.syncStatus({});
+  assert.ok(status.running);
+  assert.deepEqual(status.completed, [
+    {
+      providerId: "substack",
+      status: "failed",
+      inserted: 0,
+      updated: 0,
+      captured: 0,
+      error: "Session expired",
+      needsLogin: true,
+    },
+  ]);
+  assert.equal(status.active?.providerId, "hackernews");
   gate.resolve();
   await run;
   db.close();
@@ -167,6 +347,63 @@ test("syncStop frees the lock immediately and the in-flight call resolves stoppe
   assert.ok(report.status === "partial");
   assert.equal(report.stopped, true);
   assert.equal(report.inserted, 1);
+  db.close();
+});
+
+test("late progress from a stopped run cannot alter a replacement run", async () => {
+  const db = await openDb();
+  const gates = [deferred(), deferred()];
+  const landed = [deferred(), deferred()];
+  let call = 0;
+  const provider: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      const index = call++;
+      await onPage("tester", {
+        kind: "items",
+        url: `/run/${index}/first`,
+        page: 0,
+        body: pageBody([index * 10 + 1]),
+      });
+      landed[index]!.resolve();
+      await gates[index]!.promise;
+      await onPage("tester", {
+        kind: "items",
+        url: `/run/${index}/second`,
+        page: 1,
+        body: pageBody([index * 10 + 2]),
+      });
+      return { account: "tester" };
+    },
+  };
+  const svc = createBackgroundService({
+    providers: { substack: provider },
+    db: dbClient(db),
+    ai: aiStub,
+    prefs: createMemoryPrefs(),
+  });
+
+  const oldRun = svc.sync({ provider: "substack" });
+  await landed[0]!.promise;
+  await svc.syncStop({});
+  const newRun = svc.sync({ provider: "substack" });
+  await landed[1]!.promise;
+
+  // Unwind only the zombie. Its provider-complete event arrives while the
+  // replacement is registered and must be discarded by identity.
+  gates[0]!.resolve();
+  await oldRun;
+  const current = await svc.syncStatus({});
+  assert.ok(current.running);
+  assert.deepEqual(
+    current.active && { pages: current.active.pagesCompleted, completed: current.completed.length },
+    { pages: 1, completed: 0 }
+  );
+
+  gates[1]!.resolve();
+  await newRun;
+  assert.deepEqual(await svc.syncStatus({}), { running: false });
   db.close();
 });
 
