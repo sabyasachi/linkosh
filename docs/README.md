@@ -14,6 +14,8 @@ specific topics.
   does after a partial sync (the backfill/resume semantics).
 - [instagram-provider.md](instagram-provider.md) — HTTP 572 (injection world
   vs volume throttle), the retry/backoff, and the backfill resume checkpoint.
+- [database-migrations.md](database-migrations.md) — versioning rules,
+  migration authoring, explicit Node file modes, tests, and release safety.
 
 ## Plans
 

@@ -13,6 +13,40 @@ export class ProviderError extends Error {
   }
 }
 
+/** A database cannot be used safely because its persisted version or schema
+ *  is invalid, inconsistent, or newer than this build understands. */
+export class DatabaseVersionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DatabaseVersionError";
+  }
+}
+
+/** One numbered schema/data migration failed. The message deliberately names
+ *  only versions and the immutable migration label — never SQL or row data. */
+export class DatabaseMigrationError extends Error {
+  fromVersion: number;
+  toVersion: number;
+  migrationName: string;
+
+  constructor(fromVersion: number, toVersion: number, migrationName: string, cause?: unknown) {
+    super(`Database migration ${fromVersion} → ${toVersion} (${migrationName}) failed`, { cause });
+    this.name = "DatabaseMigrationError";
+    this.fromVersion = fromVersion;
+    this.toVersion = toVersion;
+    this.migrationName = migrationName;
+  }
+}
+
+/** SQLite or its backing VFS could not open the database. Unlike a migration
+ *  failure, this means an export cannot be produced from the DB worker. */
+export class DatabaseOpenError extends Error {
+  constructor(message = "The database could not be opened; normal operations and export are unavailable.", cause?: unknown) {
+    super(message, { cause });
+    this.name = "DatabaseOpenError";
+  }
+}
+
 /** JSON-safe form of an error crossing an RPC hop. */
 export interface SerializedError {
   name: string;

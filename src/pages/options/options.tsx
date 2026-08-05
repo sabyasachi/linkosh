@@ -19,6 +19,15 @@ const api = createClient<BackgroundApi>(
 const prefs = createChromePrefs();
 
 function errorText(error: unknown): string {
+  if (
+    error instanceof Error &&
+    ["DatabaseVersionError", "DatabaseMigrationError"].includes(error.name)
+  ) {
+    return `Database initialization failed. Normal operations are unavailable, but Export database below can save a recovery copy. ${error.message}`;
+  }
+  if (error instanceof Error && error.name === "DatabaseOpenError") {
+    return `The database could not be opened, so normal operations and export are unavailable. ${error.message}`;
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -104,7 +113,7 @@ function OptionsApp() {
     try {
       setAiStatus(formatStatus(await api.aiStatus({})));
     } catch (e) {
-      setAiStatus(e instanceof Error ? e.message : "Unavailable");
+      setAiStatus(errorText(e));
     }
   };
 
@@ -113,8 +122,14 @@ function OptionsApp() {
       const result = await api.rawStats({});
       setRawStats(result.stats);
       setCaptureMode(result.captureRaw);
-    } catch {
+    } catch (error) {
       // The action status reports concrete failures; periodic refresh is best-effort.
+      if (
+        error instanceof Error &&
+        ["DatabaseVersionError", "DatabaseMigrationError", "DatabaseOpenError"].includes(error.name)
+      ) {
+        setDevStatus(errorText(error));
+      }
     }
   };
 

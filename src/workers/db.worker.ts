@@ -8,27 +8,27 @@
 // the OPFS-backed file, the `export` op, and serving DbWorkerApi over
 // postMessage.
 import sqlite3InitModule, { type Sqlite3Static } from "../vendor/sqlite3.mjs";
-import { initSchema } from "../core/db/schema.ts";
+import { DatabaseOpenError } from "../core/errors.ts";
+import { initializeDatabase } from "../core/db/migrations.ts";
 import { wasmDb, type WasmSqlDatabase } from "../core/db/wasm.ts";
-import { createDbService, type DbWorkerApi } from "../core/db/service.ts";
+import { createDbService, gateDbWorkerHandlers, type DbWorkerApi } from "../core/db/service.ts";
 import { ingestPending, reingest } from "../core/ingest.ts";
 import { serveWorker, type WorkerScopeLike } from "../core/rpc/transports.ts";
 import type { Handlers } from "../core/rpc/protocol.ts";
 
-interface DbHost {
+interface OpenedDbHost {
   sqlite3: Sqlite3Static;
   db: WasmSqlDatabase;
-  handlers: Handlers<DbWorkerApi>;
+  export: Handlers<DbWorkerApi>["export"];
 }
 
-const ready: Promise<DbHost> = (async () => {
+const opened: Promise<OpenedDbHost> = (async () => {
   const sqlite3 = await sqlite3InitModule();
   const poolUtil = await sqlite3.installOpfsSAHPoolVfs({ name: "linkosh" });
   // The filename is versioned: the pre-TypeScript predecessor used a
   // different schema with no migration path, so a fresh name guarantees
   // CREATE TABLE IF NOT EXISTS never meets stale DDL.
   const db = wasmDb(new poolUtil.OpfsSAHPoolDb("/linkosh-v1.sqlite"));
-  initSchema(db);
 
   // Serialized copy of the whole DB file, written to a plain OPFS file. The
   // popup shares the extension origin (and thus the OPFS), so it reads the
@@ -44,9 +44,30 @@ const ready: Promise<DbHost> = (async () => {
     return { file: "linkosh-export.sqlite", size: bytes.length };
   }
 
+  return { sqlite3, db, export: () => exportDb() };
+})().catch((cause: unknown) => {
+  console.error("Database open failed", cause);
+  throw new DatabaseOpenError(undefined, cause);
+});
+
+const migrated: Promise<Handlers<DbWorkerApi>> = opened.then(({ db, export: exportHandler }) => {
+  try {
+    const result = initializeDatabase(db);
+    if (result.created || result.applied.length) {
+      const steps = result.applied.map((step) => `${step.version} ${step.name}`).join(", ");
+      console.info(
+        `Database ${result.fromVersion} → ${result.toVersion}` +
+          (steps ? ` (${steps})` : " (created latest schema)")
+      );
+    }
+  } catch (error) {
+    console.error("Database initialization failed", error);
+    throw error;
+  }
+
   const handlers: Handlers<DbWorkerApi> = {
     ...createDbService(db),
-    export: () => exportDb(),
+    export: exportHandler,
     // Replay the raw_data archive through the shared parse+upsert pipeline
     // (core/ingest.ts — the same module tools/ingest.ts runs under Node).
     // Registered here, next to the DB, so page bodies never make a second
@@ -62,20 +83,12 @@ const ready: Promise<DbHost> = (async () => {
   debugScope.__db = db;
   debugScope.__sql = (sql: string, bind: never[] = []) => db.rows(sql, bind);
 
-  return { sqlite3, db, handlers };
-})();
+  return handlers;
+});
 
-// Every op waits for the DB to open; unknown ops fail inside the handler.
+// Export needs only a successfully opened handle. Every other operation fails
+// closed until schema validation/migration has completed.
 serveWorker<DbWorkerApi>(
   self as unknown as WorkerScopeLike,
-  new Proxy({} as Handlers<DbWorkerApi>, {
-    get(_target, op: string) {
-      return async (args: never) => {
-        const { handlers } = await ready;
-        const handler = (handlers as Record<string, (args: never) => unknown>)[op];
-        if (!handler) throw new Error(`Unknown DB op: ${op}`);
-        return handler(args);
-      };
-    },
-  })
+  gateDbWorkerHandlers(opened.then(({ export: exportHandler }) => ({ export: exportHandler })), migrated)
 );

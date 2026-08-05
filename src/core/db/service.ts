@@ -5,6 +5,7 @@
 // only behind the worker/postMessage transport — typed arrays never ride
 // chrome.runtime.
 import type { IngestReport, ProviderId, RawDataRow, SavedItem } from "../types.ts";
+import type { Handlers } from "../rpc/protocol.ts";
 import type { SqlDatabase } from "./port.ts";
 import * as items from "./items.ts";
 import * as raw from "./raw.ts";
@@ -54,6 +55,25 @@ export interface DbWorkerApi extends DbApi {
   export(args: Record<string, never>): { file: string; size: number };
   rawIngest(args: { provider?: ProviderId | null }): IngestReport;
   rawReingest(args: { provider?: ProviderId | null }): IngestReport;
+}
+
+/** Route export through SQLite-open readiness while every schema-dependent
+ *  operation waits for successful initialization/migration. Kept in core so
+ *  the fail-closed worker seam is directly unit-testable under Node. */
+export function gateDbWorkerHandlers(
+  opened: Promise<Pick<Handlers<DbWorkerApi>, "export">>,
+  migrated: Promise<Handlers<DbWorkerApi>>
+): Handlers<DbWorkerApi> {
+  return new Proxy({} as Handlers<DbWorkerApi>, {
+    get(_target, op: string) {
+      return async (args: never) => {
+        const handlers = op === "export" ? await opened : await migrated;
+        const handler = (handlers as Record<string, (args: never) => unknown>)[op];
+        if (!handler) throw new Error(`Unknown DB op: ${op}`);
+        return handler(args);
+      };
+    },
+  });
 }
 
 export function createDbService(db: SqlDatabase): DbApi {

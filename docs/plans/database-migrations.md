@@ -1,6 +1,6 @@
 # Versioned SQLite schema and data migrations
 
-Status: proposed (not implemented).
+Status: implemented.
 
 ## Outcome
 
