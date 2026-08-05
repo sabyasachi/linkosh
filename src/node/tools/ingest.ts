@@ -3,7 +3,7 @@
 // without touching a live service — the no-refetch iteration workflow:
 //
 //   1. In the extension: enable capture mode, sync, then Export database from Options → Developer.
-//   2. Iterate on core/parse/* here:
+//   2. Iterate on core/parse/* here (the target DB is migrated and modified):
 //        node src/node/tools/ingest.ts linkosh-export.sqlite            # pending+failed rows
 //        node src/node/tools/ingest.ts linkosh-export.sqlite --reingest # everything, again
 //   3. Inspect results (sqlite3 CLI, tests), fix, repeat.
@@ -59,8 +59,16 @@ if (dryRun) {
   copyFileSync(file, target);
 }
 
-const db = openDbFile(target);
+const db = openDbFile(target, { schema: "migrate" });
 try {
+  const migration = db.migration!; // schema: "migrate" always supplies a result
+  if (migration.fromVersion !== migration.toVersion) {
+    const steps = migration.applied.map((step) => `${step.version} ${step.name}`).join(", ");
+    console.log(
+      `database: ${migration.fromVersion} → ${migration.toVersion}` +
+        (steps ? ` (${steps})` : " (created latest schema)")
+    );
+  }
   const scope = { provider: provider ?? null };
   const result = doReingest ? reingest(db, scope) : ingestPending(db, scope);
 

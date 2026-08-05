@@ -87,7 +87,7 @@ for (const keyArg of keyArgs) {
   explicitKeys.set(table, key);
 }
 
-const db = openDbFile(beforeFile, { init: false, readOnly: true });
+const db = openDbFile(beforeFile, { schema: "inspect", readOnly: true });
 let hadDiff = false;
 
 try {

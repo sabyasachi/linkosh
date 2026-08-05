@@ -306,7 +306,21 @@ async function main(): Promise<void> {
   const port = Number(opt("--port") ?? process.env.PORT ?? 5173);
 
   let wasmDb: Awaited<ReturnType<typeof openDb>> | null = null;
-  const db: SqlDatabase = dbFile ? openDbFile(dbFile) : (wasmDb = await openDb());
+  let db: SqlDatabase;
+  if (dbFile) {
+    const opened = openDbFile(dbFile, { schema: "migrate" });
+    db = opened;
+    const migration = opened.migration!;
+    if (migration.fromVersion !== migration.toVersion) {
+      const steps = migration.applied.map((step) => `${step.version} ${step.name}`).join(", ");
+      console.log(
+        `database: ${migration.fromVersion} → ${migration.toVersion}` +
+          (steps ? ` (${steps})` : " (created latest schema)")
+      );
+    }
+  } else {
+    db = wasmDb = await openDb();
+  }
   if (!dbFile) seedFixtures(db);
   const service = createDevService(db);
   const staticRoot = join(root, "dist", "src");

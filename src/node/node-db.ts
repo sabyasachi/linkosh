@@ -10,7 +10,8 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import type { DatabaseSync } from "node:sqlite";
 import sqlite3InitModule, { type Sqlite3Static } from "../vendor/sqlite3.mjs";
-import { initSchema } from "../core/db/schema.ts";
+import { DatabaseVersionError } from "../core/errors.ts";
+import { initializeDatabase, type MigrationResult } from "../core/db/migrations.ts";
 import { wasmDb, type WasmSqlDatabase } from "../core/db/wasm.ts";
 import { runTransaction, type SqlDatabase, type SqlRow, type SqlValue } from "../core/db/port.ts";
 
@@ -63,7 +64,7 @@ function loadNodeSqlite(): NodeSqliteModule {
 export async function openDb(): Promise<WasmSqlDatabase> {
   const sqlite3 = await loadSqlite3();
   const db = wasmDb(new sqlite3.oo1.DB(":memory:"));
-  initSchema(db);
+  initializeDatabase(db);
   return db;
 }
 
@@ -102,16 +103,35 @@ function nodeSqliteDb(db: DatabaseSync): SqlDatabase {
   };
 }
 
+export interface OpenedFileDatabase extends SqlDatabase {
+  /** null in inspect mode; otherwise the transition performed at open. */
+  migration: MigrationResult | null;
+}
+
+export interface OpenDbFileOptions {
+  /** inspect is byte/schema-faithful; migrate explicitly permits startup DDL/DML. */
+  schema: "migrate" | "inspect";
+  readOnly?: boolean;
+}
+
 /** Disk-backed DB using Node's native sqlite driver. Mutations are written
- *  directly to `file`; no deserialize/export copy is involved. */
+ *  directly to `file`; callers must explicitly choose migration or inspection. */
 export function openDbFile(
   file: string,
-  { init = true, readOnly = false }: { init?: boolean; readOnly?: boolean } = {}
-): SqlDatabase {
+  { schema, readOnly = false }: OpenDbFileOptions
+): OpenedFileDatabase {
+  if (schema === "migrate" && readOnly) {
+    throw new DatabaseVersionError("A database cannot be migrated through a read-only file handle.");
+  }
   const { DatabaseSync } = loadNodeSqlite();
   const db = nodeSqliteDb(new DatabaseSync(file, readOnly ? { readOnly: true } : {}));
-  if (init) initSchema(db);
-  return db;
+  try {
+    const migration = schema === "migrate" ? initializeDatabase(db) : null;
+    return Object.assign(db, { migration });
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }
 
 /** In-memory WASM DB loaded from a .sqlite file's bytes (e.g. an extension

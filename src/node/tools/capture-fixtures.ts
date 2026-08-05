@@ -48,7 +48,7 @@ interface DumpRow {
   error: string | null;
 }
 
-const db = openDbFile(file, { init: false, readOnly: true });
+const db = openDbFile(file, { schema: "inspect", readOnly: true });
 const where: string[] = [];
 const bind: string[] = [];
 if (provider) {

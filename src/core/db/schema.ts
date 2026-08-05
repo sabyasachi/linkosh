@@ -1,7 +1,7 @@
-// Clean v1 schema — the TypeScript rewrite starts fresh (the pre-rewrite
-// migration chain was retired with its data; the OPFS filename changed to
-// linkosh-v1.sqlite so an old-schema file can never collide with these
-// CREATE IF NOT EXISTS statements).
+// Canonical latest schema. New databases are created directly from this end
+// state; existing databases are upgraded by migrations.ts. The OPFS filename's
+// "v1" marks the abandoned pre-TypeScript compatibility boundary and is not
+// this schema's PRAGMA user_version.
 import type { SqlDatabase } from "./port.ts";
 
 export const SCHEMA = `
@@ -93,18 +93,9 @@ export const FTS_SCHEMA = `
   END;
 `;
 
-/** Apply the current schema to a freshly opened DB, and bring an existing DB
- *  (created before a column existed — CREATE IF NOT EXISTS won't touch it) up
- *  to date. Additive columns only; anything structural would need a real
- *  migration story. */
-export function initSchema(db: SqlDatabase): void {
+/** Create the canonical latest schema for a database known to be empty.
+ *  Existing databases must go through initializeDatabase instead. */
+export function createLatestSchema(db: SqlDatabase): void {
   db.exec(SCHEMA);
-  for (const column of ["deleted_at", "starred_at", "sort_key"]) {
-    const present = db.rows<{ n: number }>(
-      "SELECT COUNT(*) AS n FROM pragma_table_info('saved_items') WHERE name = ?",
-      [column]
-    )[0]!.n;
-    if (!present) db.exec(`ALTER TABLE saved_items ADD COLUMN ${column} INTEGER`);
-  }
   db.exec(FTS_SCHEMA);
 }

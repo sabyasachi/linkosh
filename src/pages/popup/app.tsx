@@ -28,6 +28,12 @@ interface Status {
 }
 
 function errorText(e: unknown): string {
+  if (e instanceof Error && ["DatabaseVersionError", "DatabaseMigrationError"].includes(e.name)) {
+    return `Database initialization failed. Normal operations are unavailable. Export a recovery copy from Options → Developer → Export database. ${e.message}`;
+  }
+  if (e instanceof Error && e.name === "DatabaseOpenError") {
+    return `The database could not be opened. Normal operations and database export are unavailable. ${e.message}`;
+  }
   return e instanceof Error ? e.message : String(e);
 }
 

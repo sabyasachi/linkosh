@@ -11,7 +11,7 @@ import {
   setDeleted,
   setStarred,
 } from "../src/core/db/items.ts";
-import { initSchema } from "../src/core/db/schema.ts";
+import { initializeDatabase } from "../src/core/db/migrations.ts";
 import { storeEmbeddings } from "../src/core/db/embeddings.ts";
 import { extractQueryFlags, ftsQuery } from "../src/core/fts.ts";
 import type { ParsedItem } from "../src/core/types.ts";
@@ -385,7 +385,7 @@ test("upsert refreshes a deleted item's fields without resurrecting it", async (
   db.close();
 });
 
-test("initSchema adds deleted_at/starred_at to a DB created before them, idempotently", async () => {
+test("version-0 adoption adds deleted_at/starred_at idempotently", async () => {
   const db = await openDb();
   const hasColumn = (name: string) =>
     db.rows<{ n: number }>(
@@ -395,12 +395,13 @@ test("initSchema adds deleted_at/starred_at to a DB created before them, idempot
   // Simulate a pre-column OPFS DB (nothing else references these columns).
   db.exec("ALTER TABLE saved_items DROP COLUMN deleted_at");
   db.exec("ALTER TABLE saved_items DROP COLUMN starred_at");
+  db.exec("PRAGMA user_version = 0");
   assert.equal(hasColumn("deleted_at"), 0);
   assert.equal(hasColumn("starred_at"), 0);
-  initSchema(db);
+  initializeDatabase(db);
   assert.equal(hasColumn("deleted_at"), 1);
   assert.equal(hasColumn("starred_at"), 1);
-  initSchema(db); // re-init on an up-to-date DB is a no-op
+  initializeDatabase(db); // re-init on an up-to-date DB is a no-op
   assert.equal(hasColumn("deleted_at"), 1);
   db.close();
 });
