@@ -4,119 +4,99 @@ Status: proposed (not implemented).
 
 ## Outcome
 
-Linkosh should be able to upgrade an existing local SQLite database across any number of skipped
-extension releases without losing saved items or user-owned state. Database startup should either:
+Linkosh can upgrade an existing local SQLite database across skipped extension releases without
+losing saved items or user-owned state. Database startup has three valid outcomes:
 
 1. create the latest schema for a new installation;
 2. migrate an older supported schema to the latest version, in order and transactionally; or
-3. stop before making changes and report a useful error when the database is newer than the code or
-   a migration cannot complete.
+3. stop before unsafe access, report a useful error, and keep export available when SQLite itself
+   opened successfully.
 
 The database version is independent of the extension/package version. Most extension releases will
-not change it. A release increments the database version only when persisted structure or persisted
-data must change.
+not change it. A release increments the database version only when persisted structure or data must
+change.
 
 ## Current state and compatibility boundary
 
-[schema.ts](../../src/core/db/schema.ts) currently contains the canonical `saved_items`, `raw_data`,
-FTS, index, and trigger definitions. `initSchema` runs whenever either database adapter opens a
-database. It creates missing objects and conditionally adds `deleted_at`, `starred_at`, and
-`sort_key` to `saved_items`.
+[schema.ts](../../src/core/db/schema.ts) contains the canonical `saved_items`, `raw_data`, FTS,
+index, and trigger definitions. Its `initSchema` creates missing objects and conditionally adds
+`deleted_at`, `starred_at`, and `sort_key` to `saved_items`. That is safe for the additive cases it
+knows about, and [db-ops.test.ts](../../tests/db-ops.test.ts) verifies idempotency, but it is not a
+general migration mechanism:
 
-That behavior is safe for the additive changes it knows about, and
-[db-ops.test.ts](../../tests/db-ops.test.ts) verifies that those column additions are idempotent. It
-is not a general migration mechanism:
-
-- SQLite `CREATE TABLE IF NOT EXISTS` does not reconcile an existing table with changed DDL.
+- `CREATE TABLE IF NOT EXISTS` does not reconcile existing DDL.
 - There is no persisted schema version or ordered history.
-- A column rename, constraint change, table rebuild, FTS definition change, or data transformation
-  has no safe execution path.
-- Code cannot distinguish an older database from a database produced by a newer extension.
-- The current OPFS filename, `linkosh-v1.sqlite`, separated the TypeScript rewrite from its
-  predecessor. Changing that filename for routine releases would strand the user's existing data
-  and is not an acceptable migration strategy.
+- Code cannot distinguish an older DB from one produced by newer code.
+- Renames, constraints, table rebuilds, FTS definition changes, and DML transformations have no
+  controlled upgrade path.
 
-All databases deployed by the current code have `PRAGMA user_version = 0`, including databases that
-predate one or more of the additive-column repairs. The first implementation must adopt those files
-without assuming that every version-0 file has exactly the same set of columns.
+All currently deployed TypeScript-era databases have `PRAGMA user_version = 0`. Some may predate
+one or more of the additive-column repairs, so version-0 adoption must tolerate those known shapes.
 
-## Design decisions
+The active OPFS filename remains `linkosh-v1.sqlite`. Its `v1` suffix marks the one-time boundary
+from the abandoned pre-TypeScript database generation; it is not the current schema version and
+must not be changed as `user_version` advances.
 
-### Use `PRAGMA user_version`
+## Design
 
-Use SQLite's application-owned `PRAGMA user_version` integer as the sole persisted schema version.
-Do not add a Linkosh migration table unless a future requirement needs per-migration metadata that
-cannot be reconstructed from code.
+### Version model
 
-Version rules:
+Use SQLite's application-owned `PRAGMA user_version` as the sole persisted schema version:
 
-- Version `0` means an unversioned database created by Linkosh before this framework.
-- Version `1` is the baseline representing the schema that exists when this framework lands.
-- Every later schema change advances by exactly one integer.
+- `0` means an unversioned database created before this framework.
+- `1` is the frozen compatibility baseline established when the framework lands.
+- Later persisted changes advance by exactly one integer.
 - Released migration numbers and bodies are immutable.
-- `CURRENT_DATABASE_VERSION` is the highest version understood by the code, not the extension
-  version.
-- Gaps and duplicate migration versions are programming errors caught by tests and at startup.
+- `CURRENT_DATABASE_VERSION` is the highest version understood by the code.
+- The valid range is `0` through `2_147_483_647`, the non-negative half of SQLite's signed 32-bit
+  database-header field range.
+- A newer stored version is rejected without executing schema DDL or DML; automatic down
+  migrations are not supported.
 
-`PRAGMA user_version` cannot be parameter-bound, so only validated integer constants from the
-migration registry may be interpolated into that statement. No provider response, preference, or
-other runtime value may reach it.
+`PRAGMA user_version = N` cannot bind `N`. The setter must accept only a validated integer constant
+from the migration registry before interpolating it. No provider data, preference, or other runtime
+value may reach that statement.
 
-### Keep a canonical latest schema and an ordered upgrade path
+Do not introduce a migration-history table unless a concrete future requirement needs metadata
+that cannot be reconstructed from the immutable registry.
 
-The latest `SCHEMA` and `FTS_SCHEMA` remain the source used for a brand-new database. They describe
-the desired end state and avoid replaying years of history on new installations.
+### Canonical latest schema and frozen version-1 adoption are separate
 
-The migration registry describes how to reach that end state from every previously released
-version. Any release that changes persisted structure must update both:
+[schema.ts](../../src/core/db/schema.ts) remains the canonical latest schema used for a brand-new
+database. New installations create that end state directly rather than replaying migration history.
 
-1. the canonical latest-schema DDL, for new databases; and
-2. one new migration, for existing databases.
+Existing unversioned databases take a different path: an independently defined, permanently frozen
+version-1 adoption routine in the new
+[migrations.ts](../../src/core/db/migrations.ts). It must not import or alias the evolving `SCHEMA`
+or `FTS_SCHEMA` string. Type-only imports are fine.
 
-Tests must prove that fresh creation and sequential migration produce equivalent observable
-schemas.
+The independence is load-bearing. `CREATE TABLE IF NOT EXISTS saved_items` does nothing to an
+existing table, but a future table, index, or trigger added to live `SCHEMA` could otherwise leak
+into version-0 adoption. A later numbered migration could then fail because its object already
+exists, or the version-0 path could silently skip intended transformation logic.
 
-### Run migrations before exposing database handlers
+Keep the frozen adoption SQL narrowly scoped instead of duplicating more latest-schema DDL than
+needed:
 
-The DB worker already opens the OPFS database and calls `initSchema` before constructing its
-handlers. Keep that ordering: no list, sync, search, ingest, or embedding operation can race a
-migration. Node tools must use the same core runner when they open a writable database.
+- the version-1 `raw_data` table and index definitions;
+- the version-1 FTS table and three maintenance triggers; and
+- the known additive-column repairs for `deleted_at`, `starred_at`, and `sort_key`.
 
-Read-only inspection tools must remain read-only. In particular, tools that currently pass
-`{ init: false, readOnly: true }` must inspect the stored version without migrating it.
+A user jumping directly from unversioned code to database version 4 must first be adopted to
+version 1 and then run migrations 2, 3, and 4 in order.
 
-### One transaction per version
+Every future persisted change must update both:
 
-Each migration runs in its own `SqlDatabase.transaction` and updates `user_version` as the final
-statement inside that same transaction. SQLite DDL is transactional, so a thrown DDL, DML,
-validation, or version-update error rolls back that entire version.
+1. canonical latest-schema DDL for new databases; and
+2. exactly one new numbered migration for existing databases.
 
-One transaction per version, rather than one transaction for the whole history, gives a clear and
-durable restart point. If upgrading from version 2 to 5 fails in migration 4, version 3 remains
-committed and reopening retries migration 4. Migration functions must not open nested transactions.
+Normalized fresh-vs-upgraded schema equivalence tests enforce this relationship. Do not add a raw
+SQL-string fingerprint: it is sensitive to formatting/comments and duplicates the stronger
+behavioral equivalence test.
 
-### Forward migrations only
+### Core API
 
-Do not implement automatic down migrations. Rolling an extension back over a newer database is not
-generally safe because old code may misinterpret new data. If `storedVersion >
-CURRENT_DATABASE_VERSION`, fail before any schema statement with a message explaining that the
-database was created by a newer Linkosh version.
-
-### Separate schema compatibility from derived-data recipes
-
-Do not add a database migration when data can be recomputed safely and lazily:
-
-- Embedding text/model changes continue to advance `embedding_model` or its `+rN` recipe suffix;
-  the orchestrator requeues mismatched rows.
-- Search indexes that can be rebuilt from `saved_items` should be recreated/rebuilt by a focused
-  migration rather than transforming the source rows unnecessarily.
-- Ephemeral preferences and sync metadata remain governed by their own storage contracts.
-
-## Proposed core API
-
-Create [migrations.ts](../../src/core/db/migrations.ts) and keep current-schema DDL in
-[schema.ts](../../src/core/db/schema.ts). The exact names may be adjusted during implementation,
-but the boundary should look like this:
+Create [migrations.ts](../../src/core/db/migrations.ts) with an API shaped like:
 
 ```ts
 export const CURRENT_DATABASE_VERSION = 1;
@@ -133,425 +113,323 @@ export interface MigrationResult {
   toVersion: number;
   applied: ReadonlyArray<{ version: number; name: string }>;
   created: boolean;
+  adopted: boolean;
 }
 
 export function readDatabaseVersion(db: SqlDatabase): number;
-export function planMigrations(db: SqlDatabase): MigrationPlan;
 export function initializeDatabase(db: SqlDatabase): MigrationResult;
 ```
 
-`initializeDatabase` replaces `initSchema` as the public startup operation. Keeping a deprecated
-alias temporarily is unnecessary unless it makes an intermediate commit easier; no released API
-depends on this internal function.
-
-The registry starts empty after the version-1 baseline:
+The production registry is initially empty because version 1 is the adoption baseline:
 
 ```ts
 const MIGRATIONS: readonly Migration[] = [
-  // The first future persisted change is version 2.
+  // The first future persisted change targets version 2.
 ];
 ```
 
-When version 2 is introduced, its registry entry is appended and
-`CURRENT_DATABASE_VERSION` becomes `2`. The runner validates at module initialization or on first
-use that entries are strictly ordered, unique, and cover every integer from 2 through the current
-version.
+Registry validation and the ordered runner should accept a registry argument internally so tests
+can execute synthetic multi-version histories. Do not export a speculative `planMigrations` API.
+Expose planning later only if the high-risk snapshot layer needs it.
+
+The runner validates that registry entries are strictly ordered, unique, and cover every integer
+from 2 through `CURRENT_DATABASE_VERSION`.
 
 ### Startup algorithm
 
-`initializeDatabase` follows this sequence:
+`initializeDatabase` performs:
 
-1. Read and validate `PRAGMA user_version` as one non-negative safe integer.
-2. If the stored version is newer than the code, throw `DatabaseVersionError` without executing
-   DDL or DML.
-3. Detect whether a Linkosh application schema exists. Checking for `saved_items` in
-   `sqlite_schema` is sufficient; SQLite internal tables do not count.
-4. If no application schema exists and the version is `0`, create the canonical latest schema in
-   one transaction, run structural validation, set `user_version = CURRENT_DATABASE_VERSION`, and
-   return `created: true`. Do not replay historical migrations. A nonzero version without an
-   application schema is inconsistent and must fail rather than being silently recreated.
-5. If application tables exist and the version is `0`, execute the baseline-adoption transaction
-   described below and set the version to `1`.
-6. Select every migration whose target version is greater than the stored version, in ascending
+1. Read `PRAGMA user_version`; reject missing, multiple, fractional, negative, or values above
+   `2_147_483_647`.
+2. If the stored version is newer than `CURRENT_DATABASE_VERSION`, throw before schema access.
+3. Detect `saved_items` in `sqlite_schema`. SQLite internal tables do not count as an application
+   schema.
+4. If there is no application schema and the version is `0`, create canonical latest-schema DDL in
+   one transaction, validate it, set `user_version = CURRENT_DATABASE_VERSION`, and return
+   `created: true`. Do not replay historical migrations.
+5. If there is no application schema but the version is nonzero, fail as inconsistent rather than
+   silently replacing possible user data.
+6. If application tables exist and the version is `0`, run frozen version-1 adoption and set
+   `user_version = 1` in the same transaction.
+7. Select every numbered migration above the resulting stored version and run them in ascending
    order.
-7. For each migration, start a transaction, call `up`, run common validation, set `user_version` to
-   that migration's target, and commit.
-8. Return the original version, final version, whether the DB was newly created, and the migrations
-   applied. The worker may log this summary for diagnosis; it must not log row contents.
+8. Return the original/final versions and applied migration summary. Log only versions and
+   migration names, never row contents.
 
-Check the too-new condition immediately after reading the version and before baseline/schema
-creation. An unexpected version must never be “fixed” by `CREATE IF NOT EXISTS`.
+### Version-0 adoption details
 
-### Adopting existing version-0 databases
+The adoption transaction preserves today's tolerant behavior while freezing it at version 1:
 
-Version 1 is a compatibility baseline, not a claim that all deployed version-0 files are identical.
-The adoption transaction should deliberately preserve today's tolerant behavior:
+1. Create the frozen version-1 `raw_data` table/index if missing.
+2. Inspect `pragma_table_info('saved_items')` and append any missing `deleted_at`, `starred_at`, and
+   `sort_key` columns.
+3. Inspect whether `saved_items_fts` exists.
+4. If FTS is absent, create the frozen version-1 FTS table/triggers and run the FTS5
+   external-content rebuild command so existing `saved_items` rows become searchable.
+5. If FTS already exists, create only missing version-1 maintenance triggers and do not rebuild a
+   valid index merely to assign a version.
+6. Validate required version-1 tables, columns, index, FTS table, and triggers.
+7. Set `PRAGMA user_version = 1` as the transaction's final statement.
 
-1. Execute a frozen version-1 baseline definition so a missing `raw_data` table/index can be
-   created.
-2. Inspect `pragma_table_info('saved_items')` and add any missing legacy additive columns:
-   `deleted_at`, `starred_at`, and `sort_key`.
-3. Create the frozen version-1 FTS table and triggers when absent.
-4. Validate required tables and columns.
-5. Set `PRAGMA user_version = 1`.
+The adoption constants are an independent copy in `migrations.ts`, with a comment that they must
+never be replaced by imports from live schema constants. The historical SQL fixtures in tests must
+also be independently defined rather than importing either production schema string.
 
-This code is isolated as `adoptUnversionedDatabase`, documented as permanent compatibility code,
-and covered with multiple legacy shapes. Once released, it must not be repurposed for later
-changes. Future changes belong only in numbered migrations.
+If evidence reveals another deployed version-0 shape, add a narrowly tested repair to adoption.
+Once version 1 ships, later product changes never alter adoption; they append numbered migrations.
 
-The baseline DDL/repair list must also be frozen. It may initially reuse constants whose contents
-are identical to version 1, but future edits to canonical latest-schema DDL must not cause a
-version-0 database to skip migrations 2 and later. A user who jumps directly from unversioned code
-to version 4 must be adopted to version 1 and then run migrations 2, 3, and 4 in order.
+### Transaction and failure semantics
 
-Do not rebuild a valid existing FTS index during baseline adoption merely to assign the version.
-If inspection reveals that a known deployed legacy FTS shape requires repair, encode and test that
-specific repair in the adoption function.
+Run one transaction per target version. A migration calls `up`, performs its validation, and sets
+`user_version` as the final statement before commit. On error, DDL, DML, validation, and the version
+update for that target all roll back.
 
-### Error model
+One transaction per version provides a durable restart point. If version 2 commits and version 3
+fails, reopening retries version 3 rather than repeating version 2. Migration functions must not
+open nested transactions; SQLite already rejects a nested `BEGIN`, and the outer transaction rolls
+back.
 
-Add errors with stable names and user-readable messages:
+Add stable, user-readable errors:
 
-- `DatabaseVersionError` for negative/invalid versions and databases newer than the code.
-- `DatabaseMigrationError` wrapping a failure with the source version, target version, and migration
-  name.
+- `DatabaseVersionError` for invalid, inconsistent, or newer versions;
+- `DatabaseMigrationError` identifying source version, target version, and migration name.
 
-The existing RPC serializer preserves a generic error's `name` and `message`, which is sufficient
-for the initial UI. Keep SQL and saved-item content out of user-facing messages. Log the original
-error locally in the DB worker for debugging, including migration number/name but not bound row
-values.
+The current RPC serializer already preserves a generic error's `name` and `message`. Messages must
+not include SQL values or saved content. The worker logs the original failure with version/name for
+diagnosis.
 
-The worker must remain failed closed when initialization fails: it must not construct normal DB
-handlers against a partially upgraded schema. Transaction rollback means reopening with corrected
-code can retry from the last committed version.
+### Opened vs migrated worker readiness
 
-## Migration authoring rules
+Refactor [db.worker.ts](../../src/workers/db.worker.ts) during the initial implementation:
 
-### Additive DDL
+- `opened` resolves after SQLite, the SAH-pool VFS, and the DB handle are available.
+- `migrated` awaits `opened`, calls `initializeDatabase`, and only then constructs list/search/sync,
+  raw-ingest, embedding, and debug handlers.
+- `export` depends only on `opened`, so a DB that opened but failed version validation/migration can
+  still be serialized and downloaded.
+- All schema-dependent operations await `migrated` and therefore fail closed.
 
-For a nullable column or a column with a valid constant default:
+The operation proxy must route `export` through `opened` without first awaiting `migrated`; merely
+splitting the promises while retaining one shared handler object would leave export stranded.
 
-1. add it to canonical `SCHEMA`;
-2. add one numbered `ALTER TABLE ... ADD COLUMN` migration;
-3. backfill it in the same migration if existing rows require a value; and
-4. update repositories/types only in the same release that contains the migration.
+The UI should recognize database initialization/version errors and say that normal operations are
+unavailable, with a path to **Options → Developer → Export**. This recovery path covers version or
+migration failures after SQLite opens. If SQLite/VFS cannot open a corrupt or truncated file,
+`opened` itself rejects and export may be impossible; the message must distinguish that condition
+and must never silently clear/recreate storage.
 
-Do not use a “column exists” check in normal numbered migrations. The stored version is the source
-of truth, and an unexpected shape should fail validation rather than silently claim success. Shape
-checks remain appropriate only in version-0 adoption, where deployed schemas are known to vary.
+Automatic pre-migration snapshots are a separate, deferred defense against a logically incorrect
+destructive migration that commits successfully.
 
-### DML/backfills
+### Node file behavior
 
-- Express transformations as deterministic SQL where practical.
-- Bind data values. Interpolate only fixed identifiers or validated migration constants.
-- Preserve user-owned state (`deleted_at`, `starred_at`, collections, raw archives, and stable
-  external identities) unless the product requirement explicitly changes its meaning.
-- Define how `NULL`, empty strings, malformed legacy JSON, and duplicate values are handled before
-  implementing the update.
-- Validate affected-row invariants inside the transaction. A migration that transforms every saved
-  item should normally verify total row count and uniqueness of `(provider, account, external_id)`.
-- Never fetch from providers, load an embedding model, or depend on network/browser state.
+Every writable database opener uses the same core runner, but callers must opt into mutation
+explicitly:
 
-For a backfill too large to fit the extension's acceptable startup budget, use an
-expand/backfill/contract sequence across releases instead of one long blocking migration:
+- `openDb()` creates/initializes a fresh in-memory WASM DB.
+- `openDbFromBytes()` remains a byte-faithful, non-migrating inspection helper as documented today.
+- Replace ambiguous `openDbFile(file, { init })` with an explicit schema mode such as
+  `openDbFile(file, { schema: "migrate" | "inspect", readOnly })`; require the option at file-backed
+  call sites rather than relying on a mutation default.
+- Comparison and fixture-extraction tools use `schema: "inspect"` and remain read-only.
+- The UX server uses `schema: "migrate"` when deliberately opening an exported DB for live use.
+- The ingest CLI uses `schema: "migrate"`, prints any version transition before ingesting, and
+  documents that the target is modified. Its existing `--out` and `--dry-run` paths remain the safe
+  ways to preserve an input copy.
 
-1. **Expand:** add nullable storage and make code tolerate both representations.
-2. **Backfill:** process bounded, resumable batches with an explicit durable completion marker while
-   continuing to support the old representation.
-3. **Contract:** only in a later release, switch the schema/read path and remove obsolete storage.
-
-The first implementation need not build a generic resumable-backfill engine. It must document this
-escape hatch and require a separate design for any migration whose representative large-DB test
-exceeds the agreed startup budget.
-
-### Table rebuilds and destructive DDL
-
-Use SQLite's table-rebuild pattern for type, constraint, primary-key, or unsupported structural
-changes:
-
-1. create `<table>_new` with the target definition;
-2. copy rows with an explicit target column list and explicit transformations;
-3. validate row counts, uniqueness, required non-null values, and JSON/domain invariants;
-4. drop dependent triggers/indexes as required;
-5. drop the old table;
-6. rename the new table to the canonical name; and
-7. recreate indexes, triggers, and FTS dependencies.
-
-All steps stay in the migration transaction. Never use `SELECT *` during a rebuild. Never depend on
-the physical column order. Repositories continue to alias snake_case SQL columns to camelCase domain
-fields.
-
-Before the first destructive/table-rebuild migration is released, implement the recovery snapshot
-phase below. Transaction rollback covers execution failures; the snapshot also protects against a
-logically incorrect transformation that commits successfully.
-
-### FTS changes
-
-Changing the `fts5(...)` column list is a structural migration even though the index is derived.
-The migration must:
-
-1. drop the three FTS maintenance triggers;
-2. drop and recreate `saved_items_fts` with the new canonical definition;
-3. recreate the triggers; and
-4. populate it from `saved_items` using FTS5's external-content rebuild command.
-
-Validate representative plain-text and column-filter searches after the migration. Do not modify
-the source `saved_items` rows solely to make the index current.
-
-### Renames and removals
-
-- Prefer an expand/contract release sequence when old and new extension code may encounter the same
-  exported database.
-- Treat a rename as a semantic change even when the SQLite runtime supports `RENAME COLUMN`; inspect
-  triggers, FTS definitions, indexes, and every repository query.
-- Drop a column only after all current code and tools have stopped selecting/writing it and the
-  migration test proves unrelated fields survive.
-- Do not rename the OPFS database file for an ordinary schema migration.
+The future high-risk migration gate below may require the ingest CLI to create a sibling backup or
+require an additional confirmation flag. Version-1 adoption is additive and does not need that
+snapshot machinery.
 
 ## Implementation phases
 
-Each phase ends with `npm test` passing. Keep runtime changes and their tests in the same commit if
-the work is committed incrementally.
+Each phase ends with `npm test` passing. Runtime changes and their tests stay in the same commit if
+work is committed incrementally.
 
-### Phase 1 — Versioned core runner and version-0 adoption
+### Phase 1 — Core runner, frozen adoption, and WASM tests
 
 Files:
 
 - [schema.ts](../../src/core/db/schema.ts)
 - new [migrations.ts](../../src/core/db/migrations.ts)
-- [db-ops.test.ts](../../tests/db-ops.test.ts), or a focused new
-  `tests/db-migrations.test.ts`
+- [errors.ts](../../src/core/errors.ts), if DB-specific error classes live with shared errors
+- new `tests/db-migrations.test.ts`, with existing DB-operation tests left focused
 
-Work:
+Implement:
 
-- Move legacy conditional-column repair out of general latest-schema creation and into the explicit
-  version-0 adoption function.
-- Freeze the version-1 baseline/adoption DDL separately from the canonical latest schema so later
-  releases cannot accidentally make an unversioned database skip numbered migrations.
-- Add `CURRENT_DATABASE_VERSION`, version reading/setting, application-schema detection, registry
-  validation, planning, fresh creation, adoption, sequential execution, common validation, and the
-  result type.
-- Keep `SCHEMA`/`FTS_SCHEMA` available to the runner, but expose `initializeDatabase` as the only
-  normal initialization entry point.
-- Query versions using `db.rows<{ user_version: number }>('PRAGMA user_version')`; reject missing,
-  multiple, fractional, negative, or unsafe values rather than coercing them.
-- Set versions using a small helper that accepts only a validated integer and calls `db.exec`.
-- Validate at minimum that required application tables, expected columns, indexes, and FTS triggers
-  exist after fresh creation/adoption. Keep migration-specific semantic assertions in each
-  migration rather than growing one global validator indefinitely.
-- Return a structured summary so worker/Node callers and tests can distinguish creation, no-op, and
-  migration.
+- Separate canonical latest-schema creation from frozen version-1 adoption.
+- Move the current conditional-column repairs into adoption.
+- Add bounded version reading/writing, application-schema detection, registry validation, ordered
+  execution, one-transaction-per-version behavior, common version-1 validation, result summaries,
+  and database errors.
+- Make the registry runner injectable internally for synthetic histories while production
+  initialization always uses the immutable production registry.
 
-Keep schema/migration code in `src/core`: it must not import DOM, Chrome, Node, or WASM-specific
-APIs.
+Required WASM tests:
 
-### Phase 2 — Wire every writable database opener through the runner
+1. Fresh DB creates the latest schema and stores version 1.
+2. A current-shape version-0 DB is adopted without changing stored row values or search results.
+3. Legacy variants independently omit `deleted_at`, `starred_at`, and `sort_key`, including one
+   shape missing all three.
+4. Missing `raw_data`/index objects are repaired without replacing `saved_items`.
+5. Missing FTS objects are recreated, rebuilt from existing rows, and return expected search
+   results; an existing valid FTS index is not needlessly rebuilt.
+6. Reopening a current DB applies nothing and changes neither schema nor data.
+7. Invalid/too-new versions and nonzero-without-schema fail without mutation.
+8. Registry validation rejects duplicates, gaps, and unordered versions.
+9. Synthetic `N → N+2` migration runs both steps once and in order.
+10. A synthetic step that performs DDL/DML and then throws rolls back that target version; a prior
+    committed version remains committed, and retry runs from that point.
+11. Version-0 adoption preserves saved-item identity, nullable timestamps, collection/stats JSON,
+    raw page bodies/status, embedding bytes/model, and FTS behavior. Compare binary/structured
+    values directly; do not invent a synthetic data transformation merely for this test.
+12. Fresh and adopted/upgraded schemas are observably equivalent using the normalized comparison
+    below.
+
+Schema equivalence deliberately ignores physical column order and original `CREATE TABLE` text.
+An adopted table keeps its historical DDL string and appends repaired columns physically, neither of
+which is an application contract. Compare:
+
+- order-insensitive sets of `{name, type, notnull, dflt_value, pk}` from `pragma_table_info`;
+- application table/index/trigger presence and index column membership by name;
+- required FTS objects; and
+- behavioral inserts, updates, deletes, plain-text search, and column-filter search.
+
+Do not compare `cid`, root pages, raw `sqlite_schema.sql`, or SQLite internal FTS object names.
+
+### Phase 2 — Worker, Node adapter, CLI, and recovery surface
 
 Files:
 
 - [db.worker.ts](../../src/workers/db.worker.ts)
 - [node-db.ts](../../src/node/node-db.ts)
-- [ux-server.ts](../../src/node/tools/ux-server.ts), if its startup copy needs adjustment
-- [ingest.ts](../../src/node/tools/ingest.ts), indirectly through `openDbFile`
-- read-only tools only if their intent needs a clearer API
+- [service.ts](../../src/core/db/service.ts), only if export/status typing changes
+- [background-service.ts](../../src/ext/background-service.ts), if recovery status needs relaying
+- [app.tsx](../../src/pages/popup/app.tsx) and/or
+  [options.tsx](../../src/pages/options/options.tsx) for initialization failure guidance
+- [ingest.ts](../../src/node/tools/ingest.ts)
+- [ux-server.ts](../../src/node/tools/ux-server.ts)
+- read-only file tools using `openDbFile`
 
-Work:
+Implement:
 
-- Replace `initSchema` calls in the worker, in-memory test opener, and writable Node file opener with
-  `initializeDatabase`.
-- In the worker, perform initialization before `createDbService`, raw-ingest handlers, debug handles,
-  or RPC readiness. Log only a concise line such as `database 1 -> 3 (2 migrations)` when work was
-  applied.
-- Preserve `openDbFile(file, { init: false, readOnly: true })` behavior for comparison and fixture
-  extraction tools. Rename the `init` option to `migrate` if doing so materially improves clarity,
-  updating all call sites in the same phase.
-- Decide explicitly whether `openDbFromBytes` remains a byte-faithful, non-migrating inspection
-  helper. The current contract says schema is not applied; retain that contract and add a separate
-  helper/call to migrate exported bytes in tests when needed.
-- Verify that both the WASM adapter and `node:sqlite` adapter execute transactional DDL and roll back
-  `user_version` with the rest of a failed migration.
+- Replace all writable `initSchema` calls with `initializeDatabase`.
+- Split worker `opened` and `migrated` readiness and route export through `opened`.
+- Keep normal handlers unavailable until migration succeeds.
+- Make every file-backed caller choose `migrate` or `inspect` explicitly.
+- Preserve `openDbFromBytes` as non-migrating.
+- Print migration summaries in writable Node tools without printing row data.
+- Render a distinct initialization/version failure with export guidance when export is available.
 
-### Phase 3 — Migration fixtures and equivalence tests
+Required integration tests:
 
-Prefer small programmatically created databases over committing opaque binary fixtures. SQL setup
-helpers should create only released historical shapes and insert minimal representative rows.
+- A temporary disk-backed `node:sqlite` file covers fresh initialization, version-0 adoption,
+  synthetic ordered migration, and transactional rollback of DDL/DML plus `user_version`.
+- The writable file opener migrates only in explicit migrate mode; inspect/read-only mode never
+  changes bytes or `user_version`.
+- Ingest/UX-server call-site behavior is pinned at the appropriate seam so future defaults cannot
+  silently reintroduce arbitrary-file migration.
+- Worker routing proves export depends only on successful open while a representative normal op
+  depends on successful migration. If the worker is too coupled for a Node unit test, extract the
+  small readiness/router seam and test that pure logic.
 
-Required cases:
+The test suite already has a repository precedent for `mkdtempSync`/`tmpdir` in the ingest tool;
+use a unique temporary directory and guaranteed cleanup. Do not commit binary SQLite fixtures when
+small programmatic historical schemas suffice.
 
-1. **Fresh database:** creates the latest schema and stores version 1.
-2. **Current unversioned database:** adoption changes only `user_version` and leaves rows/search
-   behavior intact.
-3. **Older unversioned variants:** independently omit `deleted_at`, `starred_at`, and `sort_key`, and
-   test at least one shape omitting all three.
-4. **Partial legacy objects:** missing `raw_data` or its index is repaired without replacing
-   `saved_items`.
-5. **Idempotency:** a second initialization applies nothing and does not alter schema/data.
-6. **Future version:** setting `user_version` above current throws and leaves both version and schema
-   untouched.
-7. **Registry integrity:** duplicate, unordered, and skipped versions are rejected in a testable
-   registry-validation helper.
-8. **Sequential skip upgrade:** introduce test-only migrations or exercise the real registry after
-   version 2 exists to prove `N -> N+2` runs both steps in order.
-9. **Failure rollback:** a test migration performs DDL and DML and then throws; its table/data/version
-   changes all roll back. Retrying with a corrected migration succeeds once.
-10. **Fresh-vs-upgraded equivalence:** compare application table columns/defaults/nullability,
-    indexes, triggers, and FTS behavior, ignoring SQLite-generated root pages and internal object
-    names that are not contractual.
-11. **Data preservation:** saved item identity, `deleted_at`, `starred_at`, `sort_key`, collection and
-    stats JSON, raw page bodies/status, and embedding bytes/model survive a representative migration.
-12. **Both engines:** core version/adoption/rollback cases run against the vendored WASM build; at
-    least one disk-backed integration test covers `node:sqlite` because CLI tools use that adapter.
+### Phase 3 — Contributor guideline and release verification
 
-Extend existing tests rather than adding a framework. Continue using `node:test` and the shared
-database port.
+Add [database-migrations.md](../database-migrations.md) as the maintained contributor guide after
+the actual API names settle, and update the database/schema section of the repository guidance.
+Move authoring process into that guide instead of duplicating it here.
 
-### Phase 4 — Pre-migration recovery snapshot for high-risk changes
+The guide must cover:
 
-This phase is required before releasing the first table rebuild, destructive DML transformation, or
-column removal. It may land with the base framework if implementation cost is small, but it should
-not delay version-1 adoption when there is no destructive migration.
+- immutable, contiguous versions and the canonical-schema-plus-migration rule;
+- why frozen v1 adoption must never alias live schema constants;
+- additive DDL and deterministic bound DML;
+- table-rebuild order with explicit column lists and invariants;
+- FTS trigger recreation and external-content rebuilds;
+- preservation of `deleted_at`, `starred_at`, raw archives, identities, and other user-owned state;
+- lazy recipe/version invalidation for derived embeddings instead of unnecessary DML;
+- expand/backfill/contract as the design path for a large migration;
+- fresh-vs-upgraded equivalence and prior/skipped-version fixtures;
+- explicit Node file migration behavior; and
+- the high-risk migration gate below.
 
-Worker behavior:
-
-- Before the first high-risk migration mutates the OPFS database, use the already-loaded SQLite WASM
-  export API to serialize the original DB to a plain OPFS recovery file.
-- Name it with source and target versions, for example
-  `linkosh-pre-migration-v2-to-v3.sqlite`; never overwrite the active SAH-pool database.
-- Finish and close the recovery-file write before starting migration SQL.
-- If the snapshot cannot be completed, abort a high-risk migration before mutation and report that
-  additional storage may be required.
-- Retain at most one confirmed recovery snapshot to prevent unbounded quota growth. Replace/delete
-  an older snapshot only after the new snapshot has been completely written.
-- Add a recovery export path that remains usable when normal DB initialization fails. The popup or
-  options page should be able to download the snapshot/current rolled-back DB without invoking
-  schema-dependent list/search handlers.
-
-Represent risk explicitly in the migration descriptor (for example `risk: 'additive' |
-'transforming'`) or in a worker-visible migration plan. The core migration runner remains
-engine-agnostic and does not perform OPFS I/O.
-
-For Node file tooling, users normally work on an exported copy. If `openDbFile` is allowed to apply a
-high-risk migration to an arbitrary path, create a sibling backup before opening it for mutation or
-require an explicit opt-out flag. Do not hide that behavior inside the core database port.
-
-Tests should cover snapshot-before-mutation ordering, snapshot write failure, retention, and export
-availability after an injected migration failure. Browser/OPFS persistence still requires the live
-smoke test below.
-
-### Phase 5 — Durable contributor guideline and release checklist
-
-After the code establishes the real API, add [database-migrations.md](../database-migrations.md) as
-the concise maintained contributor guide and update the schema section of the repository guidance.
-Link to code/tests instead of duplicating implementation details from this plan.
-
-The guide should provide a copyable checklist:
-
-1. Choose the next integer and a descriptive immutable name.
-2. Update canonical latest-schema DDL.
-3. Add exactly one ordered migration.
-4. Specify transformations, invalid legacy-data handling, invariants, and risk classification.
-5. Update repositories/domain types in the same release.
-6. Add previous-version, skipped-version, rollback, preservation, and fresh-equivalence tests.
-7. Benchmark against a representative large exported database.
-8. Run automated gates and the live extension smoke test.
-9. Export/open the migrated DB with Node tooling and inspect its stored version.
-10. Record the DB version change in release notes; never edit the migration after release.
-
-## Verification and release gates
-
-### Automated
-
-Run:
+Automated gate:
 
 ```sh
 npm test
 npm run build
 ```
 
-`npm test` remains the primary gate because it typechecks every container and executes schema tests
-against the shipped SQLite WASM build. The disk-backed Node migration integration test must also be
-part of this command.
+Live extension verification with a disposable profile or backed-up real DB:
 
-For each real future migration, additionally run it against:
+1. Create normal items, a starred item, a soft-deleted item, embeddings, and capture-mode raw rows
+   under the previous build.
+2. Export the pre-upgrade DB and record version, counts, and representative values.
+3. Upgrade without clearing origin storage and confirm the worker reports exactly one `0 → 1`
+   adoption.
+4. Verify popup/full-page list, FTS/hybrid/semantic search, starred/deleted views, similar items, raw
+   ingest, and export.
+5. Reload the extension/restart Chrome and confirm initialization is a no-op.
+6. Open the post-upgrade export with Node tooling and verify its version.
+7. Exercise an injected migration failure in a development build: normal DB ops fail, while Options
+   can still export the rolled-back/intermediate DB.
 
-- a minimal database at the immediately previous version;
-- a database several supported versions behind;
-- a representative large, scrubbed export copy; and
-- malformed-but-anticipated legacy values identified in the migration design.
+Test downgrade protection only against a copied DB under Node; do not point older live code at the
+user's only OPFS database.
 
-Record elapsed time and resulting file-size growth for the large copy. A migration that can make
-extension startup appear hung needs either UI progress/recovery treatment or the staged backfill
-design described above.
+## Deferred gate for the first high-risk migration
 
-### Live extension smoke test
+The initial framework contains only additive version-0 adoption. Before releasing the first table
+rebuild, column removal, destructive DML transformation, or backfill large enough to threaten
+startup responsiveness, write a focused design and implement the required safeguards:
 
-Using a disposable Chrome profile or a backed-up real database:
+- classify pending migration risk before mutation;
+- export the original WASM DB to a completed plain OPFS recovery snapshot before a high-risk step;
+- abort before mutation if a required snapshot cannot be written;
+- retain at most one confirmed recovery snapshot without overwriting the active SAH-pool DB;
+- expose snapshot download through the already separated `opened` recovery path;
+- define equivalent backup/confirmation behavior for writable Node files;
+- benchmark a representative large scrubbed export on an agreed reference device;
+- set a concrete startup-time threshold for that migration; and
+- use a separately designed resumable expand/backfill/contract flow if it exceeds the threshold.
 
-1. Load the previous extension build and create representative data: normal saved items, a starred
-   item, a soft-deleted item, embeddings, and capture-mode raw rows.
-2. Export the pre-upgrade database and record `PRAGMA user_version`, counts, and representative
-   values.
-3. Upgrade/reload the new unpacked extension without clearing origin storage.
-4. Confirm the worker logs the expected source/target versions exactly once.
-5. Reopen popup and full page; verify list, FTS, semantic/hybrid search, starred/deleted views,
-   similar items, raw ingest, and export.
-6. Restart Chrome/reload the extension and confirm initialization is now a no-op.
-7. Open the exported post-upgrade database with the Node tools and verify the current version.
-8. For a high-risk migration, verify the pre-migration snapshot can be downloaded and opened.
-
-Also test downgrade protection by opening a copied newer-version DB with older code under Node. It
-must fail before modifying the copy; do not point an older live extension at the user's only OPFS
-database merely to test this path.
-
-## Example of a future migration change
-
-Suppose version 2 adds a nullable `archived_reason` field to `saved_items`.
-
-The release should contain all of the following:
-
-```ts
-export const CURRENT_DATABASE_VERSION = 2;
-
-const MIGRATIONS: readonly Migration[] = [
-  {
-    version: 2,
-    name: "add-saved-item-archived-reason",
-    up(db) {
-      db.exec("ALTER TABLE saved_items ADD COLUMN archived_reason TEXT");
-    },
-  },
-];
-```
-
-- `archived_reason TEXT` is also added to the canonical `CREATE TABLE saved_items` statement.
-- The repository selects/updates it only after initialization can guarantee version 2.
-- Tests migrate a version-1 row, verify its value is `NULL`, compare the result with a fresh
-  version-2 schema, verify a second open is a no-op, and verify rollback with an injected failing
-  migration.
-
-This example is illustrative only; do not add an unused column to implement the framework.
+Transaction rollback protects execution failures. The snapshot protects against a logically wrong
+transformation that validates and commits. Do not add unused `risk` fields, snapshot retention code,
+or a generic resumable-backfill engine until a concrete migration requires them.
 
 ## Acceptance criteria
 
-The migration framework is complete when:
+The initial migration framework is complete when:
 
-- existing unversioned OPFS databases are adopted in place with all saved data preserved;
-- new databases are stamped with the current database version;
-- every writable opener uses one shared core migration runner;
-- skipped versions migrate sequentially and each committed step advances `user_version` atomically;
-- failed migrations roll back and retry from the last committed version;
-- newer databases are rejected without mutation;
-- fresh and upgraded schemas are demonstrably equivalent;
-- both WASM and Node database paths are covered;
-- contributors have an enforced, documented workflow for DDL and DML changes; and
-- destructive migrations cannot ship before an automatic, user-recoverable snapshot path exists.
+- existing unversioned OPFS databases are adopted in place with representative values preserved;
+- a missing FTS index is rebuilt from existing saved items;
+- fresh databases are stamped with the current database version;
+- frozen version-1 adoption is independent of canonical latest-schema constants and test fixtures;
+- synthetic skipped versions run sequentially and each committed step advances `user_version`
+  atomically;
+- failed steps roll back and retry from the last committed version;
+- invalid/newer/inconsistent databases are rejected without mutation;
+- normalized fresh and upgraded schemas plus repository/FTS behavior are equivalent;
+- both shipped WASM and disk-backed Node paths are covered;
+- all writable file callers opt into migration explicitly;
+- normal worker operations fail closed after migration failure while export remains available after
+  a successful SQLite open;
+- users receive distinct migration/open failure guidance; and
+- a maintained contributor guide and tests enforce the workflow where mechanically possible.
+
+The first high-risk migration has the additional acceptance gate defined above.
 
 ## Non-goals
 
-- Migrating the abandoned pre-TypeScript database that intentionally used a different OPFS
-  filename.
+- Migrating the abandoned pre-TypeScript database that intentionally used a different OPFS file.
 - Automatic downgrade/down migrations.
 - Synchronizing schema versions across devices; the SQLite file is local to one extension origin.
-- A generic online/resumable backfill framework before a concrete large-data migration requires it.
-- Treating provider payload changes, parser changes, preferences, or embedding recipe changes as
-  database schema migrations when persisted compatibility is unchanged.
+- Automatic recovery when SQLite/VFS cannot open a corrupt database.
+- Prebuilding snapshot retention, risk classification, or resumable backfills before a concrete
+  migration needs them.
+- Treating provider payload, parser, preference, or embedding-recipe changes as DB migrations when
+  persisted compatibility is unchanged.
