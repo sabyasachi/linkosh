@@ -5,7 +5,13 @@
 // export, and the capture-mode dev row.
 import { h, Fragment } from "../../vendor/preact/preact.js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "../../vendor/preact/hooks.js";
-import { formatPoster, formatSynced, hackerNewsCounts, metaParts } from "../../core/format.ts";
+import {
+  formatPoster,
+  formatSynced,
+  hackerNewsBadge,
+  hackerNewsCounts,
+  metaParts,
+} from "../../core/format.ts";
 import { FTS_OPERATORS } from "../../core/fts.ts";
 import type { PageKind, ProviderId, ProviderMeta, SavedItem, SearchMode, SyncReport } from "../../core/types.ts";
 import type { SyncRunStatus } from "../../ext/background-service.ts";
@@ -165,9 +171,28 @@ function Thumbnail({ item }: { item: SavedItem }) {
   useEffect(() => setFailed(false), [item.image]);
 
   if (!item.image || failed) {
+    const hnBadge = hackerNewsBadge(item);
     return (
-      <div class="thumb placeholder">
-        {(item.title || item.posterName || "?").slice(0, 1).toUpperCase()}
+      <div class={`thumb placeholder${hnBadge ? " hackernews-badge" : ""}`} aria-hidden="true">
+        {hnBadge ? (
+          hnBadge === "HN" ? (
+            <span class="hn-badge-only">HN</span>
+          ) : hnBadge === "COMMENT" ? (
+            <>
+              <svg class="hn-comment-icon" viewBox="0 0 20 20">
+                <path d="M3 3.5h14v10H9l-4.5 3v-3H3z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+              </svg>
+              <span class="hn-badge-source">HN</span>
+            </>
+          ) : (
+            <>
+              <span class={`hn-badge-category${hnBadge.length > 5 ? " long" : ""}`}>{hnBadge}</span>
+              <span class="hn-badge-source">HN</span>
+            </>
+          )
+        ) : (
+          (item.title || item.posterName || item.posterHandle || "?").slice(0, 1).toUpperCase()
+        )}
       </div>
     );
   }

@@ -375,6 +375,46 @@ li.sentinel {
   color: var(--accent);
 }
 
+/* HN exposes no images, so its placeholder carries useful, stable taxonomy
+   instead of repeating the first character of the adjacent title. */
+.thumb.hackernews-badge {
+  flex-direction: column;
+  gap: 2px;
+  border: 1px solid var(--border);
+  background: var(--hover);
+  box-shadow: inset 3px 0 #ff6600;
+  color: var(--fg);
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.hn-badge-category {
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hn-badge-category.long {
+  font-size: 8px;
+  letter-spacing: 0;
+}
+
+.hn-badge-source {
+  font-size: 9px;
+  font-weight: 650;
+  color: var(--muted);
+}
+
+.hn-badge-only {
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.hn-comment-icon {
+  width: 18px;
+  height: 18px;
+  color: #e45b00;
+}
+
 .text {
   min-width: 0;
 }

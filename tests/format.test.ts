@@ -6,6 +6,7 @@ import {
   formatCollection,
   formatStats,
   formatPoster,
+  hackerNewsBadge,
   formatRelativeDate,
   metaParts,
 } from "../src/core/format.ts";
@@ -65,6 +66,19 @@ test("formatPoster combines split display name and handle", () => {
   assert.equal(formatPoster({ posterName: "Jane Doe", posterHandle: "jane" }), "Jane Doe (@jane)");
   assert.equal(formatPoster({ posterHandle: "@alice" }), "@alice");
   assert.equal(formatPoster({ posterName: "Some Channel" }), "Some Channel");
+});
+
+test("hackerNewsBadge classifies recognizable HN rows and uses HN for ordinary stories", () => {
+  const story = (title: string) => ({ provider: "hackernews", kind: "story", title });
+
+  assert.equal(hackerNewsBadge(story("Ask HN: How should I learn Rust?")), "ASK");
+  assert.equal(hackerNewsBadge(story("Show HN: Elevators")), "SHOW");
+  assert.equal(hackerNewsBadge(story("Launch HN: Example (YC S26)")), "LAUNCH");
+  assert.equal(hackerNewsBadge(story("Ask HN: Who is hiring? (August 2026)")), "JOBS");
+  assert.equal(hackerNewsBadge(story("Ask HN: Freelancer? Seeking freelancer? (August 2026)")), "JOBS");
+  assert.equal(hackerNewsBadge(story("How to Exist")), "HN");
+  assert.equal(hackerNewsBadge({ provider: "hackernews", kind: "comment", title: "" }), "COMMENT");
+  assert.equal(hackerNewsBadge({ provider: "youtube", kind: "video", title: "Ask HN: Nope" }), "");
 });
 
 test("formatRelativeDate buckets estimated dates", () => {
