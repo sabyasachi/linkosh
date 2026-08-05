@@ -109,7 +109,7 @@ export interface RawPage {
   kind: PageKind;
   /** Where it came from (debugging/archive). */
   url: string;
-  /** 0-based position within this sync run. */
+  /** 0-based position within the provider-specific source/list. */
   page: number;
   /** JSON-safe parse inputs not recoverable from the body (IG collection-id →
    *  name map, YT {playlistId, collection}) — must keep the page independently
@@ -228,6 +228,25 @@ export interface AllSyncReport extends SyncCounts {
   reports: SyncReport[];
 }
 
+/** JSON-safe, self-contained progress snapshots emitted in-process while a
+ *  provider sync runs. Observer callbacks are presentation-only: the sync
+ *  layer catches their failures so they can never change a sync outcome. */
+export type SyncProgressEvent =
+  | { type: "provider-start"; providerId: ProviderId; at: number }
+  | {
+      type: "page-complete";
+      providerId: ProviderId;
+      at: number;
+      kind: PageKind;
+      pagesCompleted: number;
+      sourcePage: number;
+      inserted: number;
+      updated: number;
+      captured: number;
+      processed: number;
+    }
+  | { type: "provider-complete"; providerId: ProviderId; at: number; report: SyncReport };
+
 export interface SyncOptions {
   /** Ignore the incremental watermark and re-walk everything. */
   full?: boolean;
@@ -235,14 +254,17 @@ export interface SyncOptions {
   captureRaw?: boolean;
   /** Test mode: stop signalling after ~this many items (0 = unlimited). */
   maxItems?: number;
-  /** syncAllProviders only: restrict the walk to these providers (user
-   *  enablement). Absent = all registered providers. syncProvider ignores it —
-   *  an explicit single-provider sync is always honored. */
+  /** syncAllProviders only: the ordered provider walk. Duplicate ids use
+   *  their first position and unknown ids are skipped. Absent = all registered
+   *  providers in registry order. syncProvider ignores it — an explicit
+   *  single-provider sync is always honored. */
   include?: readonly ProviderId[];
   /** Cooperative stop token, checked at every page boundary. Structural on
    *  purpose: a real AbortSignal satisfies it while core/ stays bare ES2022
    *  (no DOM lib, so no AbortSignal type here). */
   stop?: { readonly aborted: boolean };
+  /** In-process progress observer; never crosses RPC and never affects sync. */
+  onProgress?: (event: SyncProgressEvent) => void;
 }
 
 /** Per-provider sync state persisted in prefs under `meta:<providerId>`. */

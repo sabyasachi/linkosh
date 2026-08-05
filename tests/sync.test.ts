@@ -10,7 +10,7 @@ import { count, list, setDeleted } from "../src/core/db/items.ts";
 import { ingestPending } from "../src/core/ingest.ts";
 import { createSync } from "../src/core/sync.ts";
 import { ProviderError } from "../src/core/errors.ts";
-import type { Provider, ProviderId, ProviderMeta } from "../src/core/types.ts";
+import type { Provider, ProviderId, ProviderMeta, SyncProgressEvent } from "../src/core/types.ts";
 
 const post = (id: number) => ({
   post: {
@@ -535,5 +535,154 @@ test("syncAllProviders honors include: providers outside it are skipped, no repo
     ["substack"]
   );
   assert.equal(res.inserted, 1);
+  db.close();
+});
+
+test("progress events are ordered, cumulative, and preserve source-page resets", async () => {
+  const db = await openDb();
+  const provider: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      for (const [i, sourcePage] of [0, 1, 0, 1].entries()) {
+        await onPage("tester", {
+          kind: "items",
+          url: `/list/${i}`,
+          page: sourcePage,
+          body: pageBody([4 - i], i === 3 ? null : `c${i}`),
+        });
+      }
+      return { account: "tester" };
+    },
+  };
+  const { sync } = harness(provider, db);
+  const events: SyncProgressEvent[] = [];
+  const report = await sync.syncProvider("substack", { onProgress: (event) => events.push(event) });
+
+  assert.deepEqual(events.map((event) => event.type), [
+    "provider-start",
+    "page-complete",
+    "page-complete",
+    "page-complete",
+    "page-complete",
+    "provider-complete",
+  ]);
+  const pages = events.filter((event) => event.type === "page-complete");
+  assert.deepEqual(pages.map((event) => event.pagesCompleted), [1, 2, 3, 4]);
+  assert.deepEqual(pages.map((event) => event.sourcePage), [0, 1, 0, 1]);
+  assert.deepEqual(pages.map((event) => [event.inserted, event.updated, event.processed]), [
+    [1, 0, 1],
+    [2, 0, 2],
+    [3, 0, 3],
+    [4, 0, 4],
+  ]);
+  const final = events.at(-1)!;
+  assert.ok(final.type === "provider-complete");
+  assert.deepEqual(final.report, report);
+  db.close();
+});
+
+test("empty and capture pages still emit persisted activity", async () => {
+  const db = await openDb();
+  const { provider } = scriptedProvider([pageBody([], null)]);
+  const { sync } = harness(provider, db);
+  const normal: SyncProgressEvent[] = [];
+  await sync.syncProvider("substack", { onProgress: (event) => normal.push(event) });
+  const empty = normal.find((event) => event.type === "page-complete");
+  assert.ok(empty?.type === "page-complete");
+  assert.deepEqual(
+    { pages: empty.pagesCompleted, processed: empty.processed, inserted: empty.inserted, updated: empty.updated },
+    { pages: 1, processed: 0, inserted: 0, updated: 0 }
+  );
+
+  const captured: SyncProgressEvent[] = [];
+  await sync.syncProvider("substack", { captureRaw: true, full: true, onProgress: (event) => captured.push(event) });
+  const page = captured.find((event) => event.type === "page-complete");
+  assert.ok(page?.type === "page-complete");
+  assert.deepEqual(
+    { captured: page.captured, inserted: page.inserted, updated: page.updated },
+    { captured: 1, inserted: 0, updated: 0 }
+  );
+  db.close();
+});
+
+test("partial failure and stop emit exactly one matching completion event", async () => {
+  const db = await openDb();
+  const failed = scriptedProvider([pageBody([2], "next")], { failAfterPage: 0 });
+  const h1 = harness(failed.provider, db);
+  const failedEvents: SyncProgressEvent[] = [];
+  const failedReport = await h1.sync.syncProvider("substack", { onProgress: (event) => failedEvents.push(event) });
+  const failedFinals = failedEvents.filter((event) => event.type === "provider-complete");
+  assert.equal(failedFinals.length, 1);
+  assert.ok(failedFinals[0]?.type === "provider-complete");
+  assert.deepEqual(failedFinals[0].report, failedReport);
+
+  const stop = { aborted: false };
+  const stopping: Provider = {
+    id: "substack",
+    label: "Substack",
+    async fetchItems({ onPage }) {
+      await onPage("tester", { kind: "items", url: "/stop", page: 0, body: pageBody([3], null) });
+      stop.aborted = true;
+      return { account: "tester" };
+    },
+  };
+  const h2 = harness(stopping, db);
+  const stoppedEvents: SyncProgressEvent[] = [];
+  const stoppedReport = await h2.sync.syncProvider("substack", {
+    stop,
+    onProgress: (event) => stoppedEvents.push(event),
+  });
+  const stoppedFinals = stoppedEvents.filter((event) => event.type === "provider-complete");
+  assert.equal(stoppedFinals.length, 1);
+  assert.ok(stoppedFinals[0]?.type === "provider-complete");
+  assert.deepEqual(stoppedFinals[0].report, stoppedReport);
+  db.close();
+});
+
+test("observer failures cannot alter success or watermark behavior", async () => {
+  const db = await openDb();
+  const { provider } = scriptedProvider([pageBody([1], null)]);
+  const { sync, meta } = harness(provider, db);
+  const report = await sync.syncProvider("substack", {
+    onProgress() {
+      throw new Error("observer broke");
+    },
+  });
+  assert.equal(report.status, "ok");
+  assert.ok(meta.get("substack")?.syncedAt);
+  db.close();
+});
+
+test("include order is authoritative, de-duplicated, and skips unknown ids", async () => {
+  const db = await openDb();
+  const ran: ProviderId[] = [];
+  const make = (id: ProviderId): Provider => ({
+    id,
+    label: id,
+    async fetchItems() {
+      ran.push(id);
+      return { account: "tester" };
+    },
+  });
+  const meta = new Map<ProviderId, ProviderMeta>();
+  const sync = createSync({
+    providers: { substack: make("substack"), hackernews: make("hackernews") },
+    db: asyncDbApi(db),
+    getMeta: async (id) => meta.get(id) ?? null,
+    setMeta: async (id, value) => void meta.set(id, value),
+  });
+  const events: SyncProgressEvent[] = [];
+  const unknown = "not-registered" as ProviderId;
+  const report = await sync.syncAllProviders({
+    include: ["hackernews", unknown, "hackernews", "substack"],
+    onProgress: (event) => events.push(event),
+  });
+  assert.deepEqual(ran, ["hackernews", "substack"]);
+  assert.deepEqual(report.reports.map((item) => item.providerId), ["hackernews", "substack"]);
+  assert.deepEqual(
+    events.filter((event) => event.type === "provider-start").map((event) => event.providerId),
+    ["hackernews", "substack"]
+  );
   db.close();
 });
