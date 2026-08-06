@@ -2,7 +2,7 @@
 
 Linkosh is a local-first Chrome extension that brings your saved items from
 LinkedIn, Instagram, YouTube, Hacker News, X, Facebook, and Substack into one
-searchable library.
+searchable library. Built with Claude and Codex.
 
 Use it to:
 
