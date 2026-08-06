@@ -1,5 +1,8 @@
 # Linkosh
 
+Linkosh = link + कोश (kosh) — "repository" in many Indian languages. Same 
+kosh as in shabdkosh, a word-repository.
+
 Linkosh is a local-first Chrome extension that brings your saved items from
 LinkedIn, Instagram, YouTube, Hacker News, X, Facebook, and Substack into one
 searchable library. Built with Claude and Codex.
