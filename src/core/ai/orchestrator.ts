@@ -26,7 +26,14 @@ export const ROWTEXT_VERSION = "r2";
 // Provider-default collection labels with no topical meaning — the user never
 // chose them as a subject, so embedding them would only add noise. Compared
 // case-insensitively.
-const COLLECTION_STOPLIST = new Set(["upvoted", "watch later", "posts", "saved", "all bookmarks"]);
+const COLLECTION_STOPLIST = new Set([
+  "upvoted",
+  "watch later",
+  "posts",
+  "saved",
+  "all bookmarks",
+  "my learning",
+]);
 
 // Row text fed to the embedding model; truncated so one pathological summary
 // can't blow up inference time. Poster is deliberately excluded — it would

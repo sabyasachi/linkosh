@@ -213,6 +213,10 @@ test("rowText appends topical collection labels, dropping provider-default ones"
     rowText({ title: "t", publication: null, summary: null, collection: [" UPVOTED "] }),
     "t"
   );
+  assert.equal(
+    rowText({ title: "t", publication: null, summary: null, collection: ["My Learning"] }),
+    "t"
+  );
   // a stoplisted-only collection on an empty row still falls through to the URL
   assert.equal(
     rowText({ title: "", publication: null, summary: null, url: "https://x.test/p", collection: ["posts"] }),

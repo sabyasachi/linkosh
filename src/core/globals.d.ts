@@ -11,6 +11,9 @@ interface URL {
   href: string;
   hostname: string;
   pathname: string;
+  searchParams: {
+    delete(name: string): void;
+  };
 }
 declare var URL: {
   new (url: string, base?: string): URL;

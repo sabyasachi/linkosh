@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { openDb } from "./helpers/open-db.ts";
 import { count } from "../src/core/db/items.ts";
-import { rawStore, rawKnownIds, rawClear, rawStats } from "../src/core/db/raw.ts";
+import { isPageKind, rawStore, rawKnownIds, rawClear, rawStats } from "../src/core/db/raw.ts";
 import { ingestPending, reingest } from "../src/core/ingest.ts";
 import type { SqlDatabase } from "../src/core/db/port.ts";
 
@@ -78,6 +78,40 @@ test("ingestPending replays raw pages into saved_items via the shared parsers", 
     db.rows<{ status: string }>("SELECT DISTINCT status FROM raw_data").map((r) => r.status),
     ["ingested"]
   );
+  db.close();
+});
+
+test("captured LinkedIn learning pages are recognized and replay through their parser branch", async () => {
+  const db = await openDb();
+  assert.equal(isPageKind("learning"), true);
+  rawStore(db, {
+    provider: "linkedin",
+    account: "jane",
+    page: {
+      kind: "learning",
+      url: "https://www.linkedin.com/voyager/api/graphql",
+      page: 0,
+      body: fixture("linkedin/learning-page.json"),
+    },
+    externalIds: [
+      "urn:li:fsd_entityResultViewModel:(urn:li:lyndaCourse:513586,SEARCH_MY_ITEMS_LEARNING,DEFAULT)",
+    ],
+    fetchedAt: Date.now(),
+  });
+
+  const res = ingestPending(db, { provider: "linkedin" });
+  assert.equal(res.ingested, 1);
+  assert.equal(res.inserted, 1);
+  const course = db.rows<{ title: string; kind: string; duration: number; collection: string; stats: string }>(
+    "SELECT title, kind, duration, collection, stats FROM saved_items WHERE provider = 'linkedin'"
+  )[0]!;
+  assert.deepEqual(course, {
+    title: "Chief Technology Officer Career Guide",
+    kind: "course",
+    duration: 9420,
+    collection: '["My Learning"]',
+    stats: '{"views":"261,138 viewers"}',
+  });
   db.close();
 });
 

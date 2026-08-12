@@ -57,7 +57,7 @@ limitations](#security-and-limitations) before installing.
 
 | Service | What Linkosh imports |
 | --- | --- |
-| LinkedIn | Saved posts |
+| LinkedIn | Saved posts and saved LinkedIn Learning content |
 | Instagram | Saved posts and their collection names |
 | YouTube | Watch Later and your playlists (Liked videos are excluded) |
 | Hacker News | Upvoted stories and comments |
@@ -277,6 +277,10 @@ Please treat Linkosh as experimental software.
   post links continue to work.
 - YouTube identifies Shorts from playlist metadata. Older Shorts without the
   expected badge or URL may appear as regular videos.
+- LinkedIn's saved-posts and My Learning pages share a private GraphQL query ID
+  that can rotate. If LinkedIn rejects every known API version, open either
+  My Items page, find `voyagerSearchDashClusters` in DevTools → Network, and
+  update `QUERY_IDS` in `src/ext/providers/linkedin.ts` from that request.
 - During the local model's first download, or while embeddings are being
   rebuilt, semantic search quietly falls back to text search. Options shows
   the remaining backlog.
