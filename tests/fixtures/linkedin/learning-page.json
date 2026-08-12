@@ -1,0 +1,67 @@
+{
+  "data": {
+    "data": {
+      "searchDashClustersByAll": {
+        "metadata": {
+          "paginationToken": null,
+          "totalResultCount": 13
+        },
+        "paging": {
+          "count": 10,
+          "start": 0,
+          "total": 13
+        }
+      }
+    }
+  },
+  "included": [
+    {
+      "$type": "com.linkedin.voyager.dash.search.EntityResultViewModel",
+      "entityUrn": "urn:li:fsd_entityResultViewModel:(urn:li:lyndaCourse:513586,SEARCH_MY_ITEMS_LEARNING,DEFAULT)",
+      "trackingUrn": "urn:li:lyndaCourse:513586",
+      "title": {
+        "text": "Chief Technology Officer Career Guide"
+      },
+      "primarySubtitle": {
+        "text": "Course · 2h 37m"
+      },
+      "secondarySubtitle": {
+        "text": "By: Drew Falkman · Released Feb 1, 2017"
+      },
+      "summary": {
+        "text": ""
+      },
+      "insightsResolutionResults": [
+        {
+          "simpleInsight": {
+            "title": {
+              "text": "261,138 viewers"
+            }
+          }
+        }
+      ],
+      "navigationUrl": "https://www.linkedin.com/learning/chief-technology-officer-career-guide?trk=my_learning_saved",
+      "image": {
+        "attributes": [
+          {
+            "detailData": {
+              "vectorImage": {
+                "rootUrl": "https://media.licdn.com/dms/image/learning/",
+                "artifacts": [
+                  {
+                    "width": 400,
+                    "fileIdentifyingUrlPathSegment": "400w.jpg"
+                  },
+                  {
+                    "width": 100,
+                    "fileIdentifyingUrlPathSegment": "100w.jpg"
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -4,11 +4,12 @@ import type { ProviderEnv } from "./env.ts";
 
 const ORIGIN = "https://www.linkedin.com";
 
-// LinkedIn's internal (Voyager) GraphQL endpoint that backs the
-// "My items > Saved posts" page. queryId versions drift over time, so we
-// try a few known ones until one works (newest first). To find the current
-// one: open linkedin.com/my-items/saved-posts/, scroll, and look for the
-// voyagerSearchDashClusters request in DevTools > Network.
+// LinkedIn's internal (Voyager) GraphQL endpoint backs both "My items > Saved
+// posts" and "My Learning". Live capture on 2026-08-12 confirmed that they use
+// the same response envelope and queryId, parameterized only by search intent.
+// queryId versions drift over time, so we try known ones newest-first. To find
+// the current one, open linkedin.com/my-items/saved-posts/ or /my-items/learning/,
+// scroll, and inspect voyagerSearchDashClusters in DevTools > Network.
 const QUERY_IDS = [
   "voyagerSearchDashClusters.a7a0567fa66c52d645b5ff2f960b92aa", // captured 2026-07
 ];
@@ -17,20 +18,27 @@ const PAGE_SIZE = 10; // LinkedIn's own page size for this endpoint
 const MAX_PAGES = 100; // hard cap: 1000 items
 const PAGE_DELAY_MS = 400; // be gentle, avoid rate limiting
 
+type SearchIntent = "SEARCH_MY_ITEMS_SAVED_POSTS" | "SEARCH_MY_ITEMS_LEARNING";
+
 const VOYAGER_HEADERS = (csrfToken: string) => ({
   accept: "application/vnd.linkedin.normalized+json+2.1",
   "csrf-token": csrfToken,
   "x-restli-protocol-version": "2.0.0",
 });
 
-function buildUrl(queryId: string, start: number, paginationToken: string | null): string {
+function buildUrl(
+  queryId: string,
+  intent: SearchIntent,
+  start: number,
+  paginationToken: string | null
+): string {
   // Voyager uses Rest.li 2.0 URL syntax: parens, colons and commas must stay
   // unencoded, so the URL is assembled by hand instead of URLSearchParams.
   // Only the token value itself (base64, may contain "=") gets encoded.
   const token = paginationToken ? `,paginationToken:${encodeURIComponent(paginationToken)}` : "";
   return (
     `${ORIGIN}/voyager/api/graphql` +
-    `?variables=(start:${start}${token},query:(flagshipSearchIntent:SEARCH_MY_ITEMS_SAVED_POSTS))` +
+    `?variables=(start:${start}${token},query:(flagshipSearchIntent:${intent}))` +
     `&queryId=${queryId}`
   );
 }
@@ -47,11 +55,12 @@ class HttpError extends Error {
  *  onPage untouched, parsing happens in the sync layer. */
 async function fetchPage(
   queryId: string,
+  intent: SearchIntent,
   start: number,
   paginationToken: string | null,
   csrfToken: string
 ): Promise<{ url: string; body: string }> {
-  const url = buildUrl(queryId, start, paginationToken);
+  const url = buildUrl(queryId, intent, start, paginationToken);
   const res = await fetch(url, {
     method: "GET",
     credentials: "include",
@@ -105,7 +114,7 @@ export function createProvider(env: ProviderEnv): Provider {
       let lastError: Error | null = null;
       for (const candidate of QUERY_IDS) {
         try {
-          firstPage = await fetchPage(candidate, 0, null, csrfToken);
+          firstPage = await fetchPage(candidate, "SEARCH_MY_ITEMS_SAVED_POSTS", 0, null, csrfToken);
           queryId = candidate;
           break;
         } catch (e) {
@@ -128,10 +137,34 @@ export function createProvider(env: ProviderEnv): Provider {
       let paginationToken = res.cursor;
       for (let page = 1; !stop && page < MAX_PAGES; page++) {
         await env.sleep(PAGE_DELAY_MS);
-        const { url, body } = await fetchPage(queryId, page * PAGE_SIZE, paginationToken, csrfToken);
+        const { url, body } = await fetchPage(
+          queryId,
+          "SEARCH_MY_ITEMS_SAVED_POSTS",
+          page * PAGE_SIZE,
+          paginationToken,
+          csrfToken
+        );
         res = await onPage(account, { kind: "items", url, page, body });
         stop = res.unseen === 0;
         paginationToken = res.cursor || paginationToken;
+      }
+
+      // My Learning uses the same queryId but no pagination token: paging is a
+      // pure start offset with paging.start/count/total in the response
+      // (captured 2026-08-12). Its ordering is not proven newest-saved-first,
+      // so deliberately ignore `unseen` and walk to the parser's paging end —
+      // stopping on known territory could silently skip a new save below it.
+      for (let page = 0; page < MAX_PAGES; page++) {
+        await env.sleep(PAGE_DELAY_MS);
+        const { url, body } = await fetchPage(
+          queryId,
+          "SEARCH_MY_ITEMS_LEARNING",
+          page * PAGE_SIZE,
+          null,
+          csrfToken
+        );
+        const learning = await onPage(account, { kind: "learning", url, page, body });
+        if (!learning.hasNext) break;
       }
       return { account };
     },

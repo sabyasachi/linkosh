@@ -45,6 +45,7 @@ function errorText(e: unknown): string {
 
 const PAGE_KIND_LABELS: Record<PageKind, string> = {
   items: "saved items",
+  learning: "learning",
   stories: "stories",
   comments: "comments",
   collections: "collections",

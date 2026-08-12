@@ -10,12 +10,14 @@ import { openDb } from "./helpers/open-db.ts";
 import { asyncDbApi } from "./helpers/async-db.ts";
 import { count } from "../src/core/db/items.ts";
 import { createSync } from "../src/core/sync.ts";
+import { parsePage } from "../src/core/parse/index.ts";
 import type { Provider, ProviderId, ProviderMeta } from "../src/core/types.ts";
 import type { ProviderEnv } from "../src/ext/providers/env.ts";
 import { createProvider as createTwitter, featureFixes } from "../src/ext/providers/twitter.ts";
 import { createProvider as createFacebook } from "../src/ext/providers/facebook.ts";
 import { createProvider as createHackernews } from "../src/ext/providers/hackernews.ts";
 import { createProvider as createInstagram } from "../src/ext/providers/instagram.ts";
+import { createProvider as createLinkedin } from "../src/ext/providers/linkedin.ts";
 import { xApiGet } from "../src/injected/twitter.ts";
 import { igApiGet } from "../src/injected/instagram.ts";
 import { fbDiscoverDocId, fbGraphqlPost, fbReadSavedPage } from "../src/injected/facebook.ts";
@@ -67,6 +69,66 @@ async function runSync(provider: Provider, db: SqlDatabase) {
   });
   return sync.syncProvider(provider.id);
 }
+
+// ---------------------------------------------------------------------------
+// linkedin (direct fetch — global fetch is faked)
+// ---------------------------------------------------------------------------
+
+test("linkedin: walks posts incrementally, then fully walks learning with the validated queryId", async (t) => {
+  const realFetch = globalThis.fetch;
+  t.after(() => (globalThis.fetch = realFetch));
+  const requests: string[] = [];
+  const handed: { kind: string; page: number }[] = [];
+  const learningFirst = JSON.parse(fixture("linkedin/learning-page.json")) as {
+    data: { data: { searchDashClustersByAll: { paging: { count: number; start: number; total: number } } } };
+  };
+  const learningFinal = structuredClone(learningFirst);
+  learningFinal.data.data.searchDashClustersByAll.paging = { start: 10, count: 10, total: 13 };
+
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.endsWith("/voyager/api/me")) {
+      return new Response(JSON.stringify({ included: [{ publicIdentifier: "jane" }] }), { status: 200 });
+    }
+    if (url.includes("SEARCH_MY_ITEMS_SAVED_POSTS")) {
+      return new Response(fixture("linkedin/saved-posts-page.json"), { status: 200 });
+    }
+    if (url.includes("SEARCH_MY_ITEMS_LEARNING")) {
+      const body = url.includes("start:10") ? learningFinal : learningFirst;
+      return new Response(JSON.stringify(body), { status: 200 });
+    }
+    throw new Error(`unexpected LinkedIn request ${url}`);
+  }) as typeof fetch;
+
+  const { env, sleeps } = fakeEnv({ cookies: { JSESSIONID: '"ajax:123"' } });
+  const provider = createLinkedin(env);
+  const result = await provider.fetchItems({
+    knownIds: new Set(),
+    async onPage(_account, page) {
+      handed.push({ kind: page.kind, page: page.page });
+      const parsed = parsePage("linkedin", { kind: page.kind, body: page.body });
+      // Every page is deliberately reported fully known. Posts must stop, but
+      // learning must continue until paging says it is complete.
+      return { ...parsed, unseen: 0 };
+    },
+  });
+
+  assert.equal(result.account, "jane");
+  assert.deepEqual(handed, [
+    { kind: "items", page: 0 },
+    { kind: "learning", page: 0 },
+    { kind: "learning", page: 1 },
+  ]);
+  assert.deepEqual(sleeps, [400, 400]);
+  const graphql = requests.filter((url) => url.includes("/voyager/api/graphql"));
+  assert.equal(graphql.filter((url) => url.includes("SEARCH_MY_ITEMS_SAVED_POSTS")).length, 1);
+  assert.equal(graphql.filter((url) => url.includes("SEARCH_MY_ITEMS_LEARNING")).length, 2);
+  assert.deepEqual(
+    [...new Set(graphql.map((url) => new URL(url).searchParams.get("queryId")))],
+    ["voyagerSearchDashClusters.a7a0567fa66c52d645b5ff2f960b92aa"]
+  );
+});
 
 // ---------------------------------------------------------------------------
 // twitter

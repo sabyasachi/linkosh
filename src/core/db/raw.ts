@@ -147,5 +147,5 @@ export function rawStats(db: SqlDatabase): RawStatsRow[] {
 
 /** Parse dialect of a stored row, for tools that re-dispatch to parsers. */
 export function isPageKind(kind: string): kind is PageKind {
-  return ["items", "stories", "comments", "collections", "playlists", "connection"].includes(kind);
+  return ["items", "learning", "stories", "comments", "collections", "playlists", "connection"].includes(kind);
 }

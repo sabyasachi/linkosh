@@ -7,6 +7,24 @@ import type { ProviderId } from "../src/core/types.ts";
 
 const fixture = (path: string) => readFileSync(new URL(`./fixtures/${path}`, import.meta.url), "utf8");
 
+interface LinkedInLearningFixture {
+  data: {
+    data: {
+      searchDashClustersByAll: {
+        paging?: { count: number; start: number; total: number };
+      };
+    };
+  };
+  included: {
+    trackingUrn?: string;
+    primarySubtitle?: { text?: string };
+    secondarySubtitle?: { text?: string };
+  }[];
+}
+
+const linkedinLearningFixture = (): LinkedInLearningFixture =>
+  JSON.parse(fixture("linkedin/learning-page.json")) as LinkedInLearningFixture;
+
 test("linkedin: entities become poster-faceted items, pagination token extracted", () => {
   const { items, cursor, hasNext } = parsePage("linkedin", {
     body: fixture("linkedin/saved-posts-page.json"),
@@ -23,6 +41,74 @@ test("linkedin: entities become poster-faceted items, pagination token extracted
   assert.equal(item.image, "https://media.licdn.com/dms/image/abc/100w.jpg"); // ~100px artifact wins
   assert.equal(cursor, "TOKEN-1");
   assert.equal(hasNext, true);
+});
+
+test("linkedin learning: course metadata is normalized and paging totals drive hasNext", () => {
+  const full = parsePage("linkedin", {
+    kind: "learning",
+    body: fixture("linkedin/learning-page.json"),
+  });
+  assert.equal(full.items.length, 1);
+  const course = full.items[0]!;
+  assert.equal(
+    course.externalId,
+    "urn:li:fsd_entityResultViewModel:(urn:li:lyndaCourse:513586,SEARCH_MY_ITEMS_LEARNING,DEFAULT)"
+  );
+  assert.equal(course.title, "Chief Technology Officer Career Guide");
+  assert.equal(course.kind, "course");
+  assert.equal(course.duration, 2 * 3600 + 37 * 60);
+  assert.equal(course.posterName, "Drew Falkman");
+  assert.equal(course.publishedAt, Date.UTC(2017, 1, 1));
+  assert.equal(course.bookmarkedAt, null);
+  assert.deepEqual(course.collection, ["My Learning"]);
+  assert.deepEqual(course.stats, { views: "261,138 viewers" });
+  assert.equal(course.url, "https://www.linkedin.com/learning/chief-technology-officer-career-guide");
+  assert.equal(course.image, "https://media.licdn.com/dms/image/learning/100w.jpg");
+  assert.equal(full.cursor, null);
+  assert.equal(full.hasNext, true); // start 0 + count 10 < total 13
+
+  const finalPage = linkedinLearningFixture();
+  finalPage.data.data.searchDashClustersByAll.paging = { start: 10, count: 10, total: 13 };
+  const final = parsePage("linkedin", { kind: "learning", body: JSON.stringify(finalPage) });
+  assert.equal(final.hasNext, false);
+
+  delete finalPage.data.data.searchDashClustersByAll.paging;
+  assert.equal(
+    parsePage("linkedin", { kind: "learning", body: JSON.stringify(finalPage) }).hasNext,
+    true
+  ); // old captures without paging fall back to a non-empty-page signal
+  finalPage.included = [];
+  assert.equal(
+    parsePage("linkedin", { kind: "learning", body: JSON.stringify(finalPage) }).hasNext,
+    false
+  );
+});
+
+test("linkedin learning: URN kinds normalize and localized display-text failures are harmless", () => {
+  const videoPage = linkedinLearningFixture();
+  videoPage.included[0]!.trackingUrn = "urn:li:lyndaVideo:42";
+  assert.equal(
+    parsePage("linkedin", { kind: "learning", body: JSON.stringify(videoPage) }).items[0]!.kind,
+    "video"
+  );
+
+  videoPage.included[0]!.trackingUrn = "urn:li:learningPath:42";
+  assert.equal(
+    parsePage("linkedin", { kind: "learning", body: JSON.stringify(videoPage) }).items[0]!.kind,
+    "learning path"
+  );
+
+  videoPage.included[0]!.trackingUrn = "not-a-urn";
+  videoPage.included[0]!.primarySubtitle = { text: "Learning content · duration unavailable" };
+  videoPage.included[0]!.secondarySubtitle = { text: "Instructor unavailable" };
+  const fallback = parsePage("linkedin", {
+    kind: "learning",
+    body: JSON.stringify(videoPage),
+  }).items[0]!;
+  assert.equal(fallback.kind, "learning");
+  assert.equal(fallback.duration, null);
+  assert.equal(fallback.posterName, "");
+  assert.equal(fallback.publishedAt, null);
 });
 
 test("hackernews stories: title/site/points parsed, discussion URLs, epoch age", () => {

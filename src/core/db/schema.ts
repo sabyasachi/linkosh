@@ -47,7 +47,7 @@ export const SCHEMA = `
     id           INTEGER PRIMARY KEY,
     provider     TEXT NOT NULL,
     account      TEXT NOT NULL,
-    kind         TEXT NOT NULL DEFAULT 'items',   -- parse dialect: items|stories|comments|collections|playlists|connection
+    kind         TEXT NOT NULL DEFAULT 'items',   -- parse dialect: items|learning|stories|comments|collections|playlists|connection
     url          TEXT NOT NULL DEFAULT '',
     page         INTEGER NOT NULL DEFAULT 0,      -- 0-based position within its sync run
     context      TEXT,                            -- JSON: parse inputs not recoverable from the body

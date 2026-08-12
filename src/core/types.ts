@@ -98,6 +98,7 @@ export interface SavedItem {
 /** Parse dialect of a fetched page — which parser branch understands it. */
 export type PageKind =
   | "items"
+  | "learning"
   | "stories"
   | "comments"
   | "collections"
