@@ -23,6 +23,10 @@ are comfortable trying a developer build, feedback and bug reports are very
 welcome. Code contributions are not being accepted at the moment — see
 [Contributing](#contributing).
 
+## Demo
+
+[Watch Linkosh in action on YouTube](https://youtu.be/2I2eKJIbs0I?si=oeJ_daxxhIQqhoKY).
+
 ## Screenshots
 
 Browse saved items from every supported service in one library.
