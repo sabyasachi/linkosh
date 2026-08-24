@@ -63,7 +63,7 @@ limitations](#security-and-limitations) before installing.
 | --- | --- |
 | LinkedIn | Saved posts and saved LinkedIn Learning content |
 | Instagram | Saved posts and their collection names |
-| YouTube | Watch Later and your playlists (Liked videos are excluded) |
+| YouTube | Watch Later, your playlists and the playlists themselves (Liked videos are excluded) |
 | Hacker News | Upvoted stories and comments |
 | X (Twitter) | Bookmarks |
 | Facebook | Saved items and collection names |
@@ -259,6 +259,14 @@ Open **Options → Developer** to:
 
 YouTube playlists other than Watch Later are fully walked on every sync
 because users can reorder them manually.
+
+A playlist is saved as an item too, not only as a label on its videos — so a
+playlist you added from someone else appears in the list as its own row (with
+its cover, owner and video count) that opens the playlist on YouTube. It shares
+a collection name with the videos inside it, so searching
+`collection:"database internals"` returns the playlist and its contents, and
+`kind:playlist` lists every playlist you have saved. Watch Later and Liked
+videos are system lists, so they don't get rows of their own.
 
 ## Security and limitations
 

@@ -276,7 +276,9 @@ test("youtube playlist end: sectionList recommendations token is not followed", 
     context: { playlistId: "PL1", collection: "music" },
     fetchedAt: Date.parse("2026-07-08T12:00:00Z"),
   });
-  assert.deepEqual(items.map((i) => i.externalId), ["real1", "real2"]);
+  // The header-less fixture still yields the playlist row from context alone
+  // (see the thin-row test below); what matters here is the video set.
+  assert.deepEqual(items.map((i) => i.externalId), ["playlist:PL1", "real1", "real2"]);
   assert.equal(cursor, null);
   assert.equal(hasNext, false);
 });
@@ -305,6 +307,92 @@ test("youtube playlists feed: both renderer dialects parsed", () => {
   assert.deepEqual(items, []);
   assert.deepEqual(playlists, { PL111: "Recipes", PL222: "Workouts" });
   assert.equal(hasNext, false);
+});
+
+test("youtube playlists feed: the grid's own continuation token is followed", () => {
+  // Regression: hasNext used to be computed by nextContinuation, which is
+  // scoped to playlist *video* lists and so never matched a feed page — the
+  // feed paged exactly once and every playlist past page 0 (with all of its
+  // videos) was invisible.
+  const { playlists, cursor, hasNext } = parsePage("youtube", {
+    kind: "playlists",
+    body: fixture("youtube/playlists-feed-paged.json"),
+  });
+  assert.deepEqual(playlists, { PLdb: "Database Internals" });
+  assert.equal(cursor, "feed-token-2");
+  assert.equal(hasNext, true);
+});
+
+for (const dialect of ["old", "new"] as const) {
+  test(`youtube playlist header (${dialect} dialect): the playlist itself is an item`, () => {
+    const { items } = parsePage("youtube", {
+      kind: "items",
+      body: fixture(`youtube/playlist-page-header-${dialect}.json`),
+      context: { playlistId: "PLdb", collection: "Database Internals" },
+      fetchedAt: Date.parse("2026-08-24T12:00:00Z"),
+    });
+    // Prepended, so the playlist takes a sort key above its own videos.
+    assert.deepEqual(items.map((i) => i.externalId), ["playlist:PLdb", "vid1"]);
+    const playlist = items[0]!;
+    assert.equal(playlist.kind, "playlist");
+    assert.equal(playlist.title, "Database Internals");
+    assert.equal(playlist.url, "https://www.youtube.com/playlist?list=PLdb");
+    assert.equal(playlist.posterName, "Some Conference");
+    assert.equal(playlist.posterHandle, "someconf");
+    assert.match(playlist.summary!, /storage engines/);
+    assert.deepEqual(playlist.collection, ["Database Internals"]);
+    assert.equal(playlist.stats!.videos, "24 videos");
+    assert.equal(playlist.stats!.views, "12,043 views");
+    assert.equal(playlist.image, "https://i.ytimg.com/pl/120.jpg"); // cover, not the owner avatar
+    // No save time and no publish time are exposed; "Updated today" is an edit
+    // time and must not be laundered into publishedAt.
+    assert.equal(playlist.bookmarkedAt, null);
+    assert.equal(playlist.publishedAt, null);
+  });
+}
+
+test("youtube playlist row: skipped for Watch Later, continuations and unidentified pages", () => {
+  const ids = (input: Parameters<typeof parsePage>[1]) =>
+    parsePage("youtube", input).items.map((i) => i.externalId);
+
+  // Watch Later is a system bucket, not a playlist the user saved.
+  assert.deepEqual(
+    ids({
+      kind: "items",
+      body: fixture("youtube/playlist-page-header-old.json"),
+      context: { playlistId: "WL", collection: "Watch later" },
+    }),
+    ["vid1"]
+  );
+  // Continuation batches carry no header and must not re-emit the row.
+  assert.deepEqual(
+    ids({
+      kind: "items",
+      body: fixture("youtube/playlist-continuation-page.json"),
+      context: { playlistId: "PLdb", collection: "Database Internals" },
+    }),
+    ["cont1"]
+  );
+  // Nothing in context identifies a playlist → no stable id or URL to build.
+  assert.deepEqual(
+    ids({ kind: "items", body: fixture("youtube/playlist-page-header-old.json") }),
+    ["vid1"]
+  );
+});
+
+test("youtube playlist row: an unrecognizable header degrades to a thin row", () => {
+  // A missing playlist is the bug being fixed, so a header shape change must
+  // cost fields, not the row — id and title are known from context alone.
+  const { items } = parsePage("youtube", {
+    kind: "items",
+    body: JSON.stringify({ header: { someFutureHeaderRenderer: { label: "?" } }, contents: {} }),
+    context: { playlistId: "PLdb", collection: "Database Internals" },
+  });
+  assert.deepEqual(items.map((i) => i.externalId), ["playlist:PLdb"]);
+  assert.equal(items[0]!.title, "Database Internals");
+  assert.equal(items[0]!.url, "https://www.youtube.com/playlist?list=PLdb");
+  assert.equal(items[0]!.image, "");
+  assert.deepEqual(items[0]!.stats, {});
 });
 
 test("youtube stats estimate publish date from bullet-separated relative age", () => {

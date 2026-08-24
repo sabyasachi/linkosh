@@ -318,9 +318,10 @@ test("youtube sync merges the same video from multiple playlists into one row", 
   const { sync } = harness(provider, db);
 
   const res = await sync.syncProvider("youtube");
-  assert.equal(res.inserted, 2);
+  // 2 videos + the PL111 playlist row (Watch Later, a system bucket, gets none).
+  assert.equal(res.inserted, 3);
   assert.equal(res.updated, 2);
-  assert.equal(count(db, { provider: "youtube" }), 2);
+  assert.equal(count(db, { provider: "youtube" }), 3);
   const row = db.rows<{ external_id: string; collection: string }>(
     "SELECT external_id, collection FROM saved_items WHERE external_id = 'abc123'"
   )[0]!;

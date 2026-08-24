@@ -18,6 +18,11 @@ const TAB = { pattern: `${ORIGIN}/*`, createUrl: `${ORIGIN}/`, label: "youtube.c
 // the playlist it came from (the `collection` field). The same video saved in
 // two playlists stays one row; the items repo merges its collection array.
 //
+// A playlist is also an item in its own right — saving someone else's playlist
+// is a save, and the row is built by the parser from the header on each
+// playlist's first page (no extra request). Watch Later and Liked videos are
+// system buckets and are excluded there, keyed off their ids.
+//
 // All HTTP goes through YouTube's internal InnerTube API
 // (POST /youtubei/v1/browse) — the same calls the website makes. Authenticated
 // InnerTube requests need a SAPISIDHASH Authorization header derived from the

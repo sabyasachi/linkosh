@@ -18,7 +18,9 @@ import { createProvider as createFacebook } from "../src/ext/providers/facebook.
 import { createProvider as createHackernews } from "../src/ext/providers/hackernews.ts";
 import { createProvider as createInstagram } from "../src/ext/providers/instagram.ts";
 import { createProvider as createLinkedin } from "../src/ext/providers/linkedin.ts";
+import { createProvider as createYoutube } from "../src/ext/providers/youtube.ts";
 import { xApiGet } from "../src/injected/twitter.ts";
+import { ytInnerTubePost } from "../src/injected/youtube.ts";
 import { igApiGet } from "../src/injected/instagram.ts";
 import { fbDiscoverDocId, fbGraphqlPost, fbReadSavedPage } from "../src/injected/facebook.ts";
 import type { SqlDatabase } from "../src/core/db/port.ts";
@@ -360,6 +362,90 @@ test("hackernews: a rate-limit page surfaces as a readable ProviderError", async
   const res = await runSync(createHackernews(env), db);
   assert.equal(res.status, "failed");
   assert.ok(res.status === "failed" && /rate limiting/.test(res.error));
+  db.close();
+});
+
+// ---------------------------------------------------------------------------
+// youtube (injected in MAIN world; playlists feed → per-playlist walks)
+// ---------------------------------------------------------------------------
+
+test("youtube: pages the playlists feed, then walks each playlist and saves the playlists themselves", async () => {
+  const db = await openDb();
+  const browsed: unknown[] = [];
+  // Feed page 2, reached only by following the grid's continuation token.
+  const feedPage2 = JSON.stringify({
+    onResponseReceivedActions: [
+      {
+        appendContinuationItemsAction: {
+          continuationItems: [
+            {
+              lockupViewModel: {
+                contentType: "LOCKUP_CONTENT_TYPE_PLAYLIST",
+                contentId: "PL2",
+                metadata: { lockupMetadataViewModel: { title: { content: "Systems Papers" } } },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  });
+  const { env } = fakeEnv({
+    cookies: { SAPISID: "sapi" },
+    onExec: ({ fn, args }) => {
+      assert.equal(fn, ytInnerTubePost); // provider must go through the injected module
+      const [endpoint, payload] = args as [string, Record<string, string>];
+      if (endpoint === "account/account_menu") {
+        return {
+          status: 200,
+          body: JSON.stringify({
+            activeAccountHeaderRenderer: { channelHandle: { simpleText: "@jane" } },
+          }),
+        };
+      }
+      assert.equal(endpoint, "browse");
+      browsed.push(payload);
+      const body =
+        payload.browseId === "FEplaylist_aggregation"
+          ? fixture("youtube/playlists-feed-paged.json")
+          : payload.continuation === "feed-token-2"
+            ? feedPage2
+            : payload.browseId === "VLWL"
+              ? fixture("youtube/playlist-end-recommendations-token.json")
+              : payload.browseId === "VLPLdb"
+                ? fixture("youtube/playlist-page-header-old.json")
+                : payload.browseId === "VLPL2"
+                  ? fixture("youtube/playlist-page-header-new.json")
+                  : assert.fail(`unexpected browse ${JSON.stringify(payload)}`);
+      return { status: 200, body };
+    },
+  });
+
+  const res = await runSync(createYoutube(env), db);
+  assert.equal(res.status, "ok");
+  // Regression: the feed used to stop after page 0, hiding every playlist
+  // beyond it — VLPL2 is only reachable through the continuation.
+  assert.deepEqual(browsed, [
+    { browseId: "FEplaylist_aggregation" },
+    { continuation: "feed-token-2" },
+    { browseId: "VLWL" }, // seeded, always walked
+    { browseId: "VLPLdb" },
+    { browseId: "VLPL2" },
+  ]);
+
+  const rows = db.rows<{ external_id: string; url: string; collection: string }>(
+    "SELECT external_id, url, collection FROM saved_items WHERE kind = 'playlist' ORDER BY external_id"
+  );
+  assert.deepEqual(
+    rows.map((r) => r.external_id),
+    ["playlist:PL2", "playlist:PLdb"] // Watch Later is a system bucket, never a row
+  );
+  assert.equal(rows[1]!.url, "https://www.youtube.com/playlist?list=PLdb");
+  assert.equal(rows[1]!.collection, '["Database Internals"]');
+  // 2 Watch Later videos + 2 playlist rows + vid1; vid1 is in both playlists,
+  // so its second sighting merges a collection instead of inserting a row.
+  assert.equal(res.inserted, 5);
+  assert.equal(res.updated, 1);
   db.close();
 });
 

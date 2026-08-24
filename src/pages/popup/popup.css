@@ -438,7 +438,12 @@ li.sentinel {
   text-overflow: ellipsis;
 }
 
+/* Whichever of the two leads is the row's name; the one below it is context. */
 .poster-title-item .title {
+  font-weight: 400;
+}
+
+.title-poster-item .poster {
   font-weight: 400;
 }
 
