@@ -156,6 +156,17 @@ export function seedFixtures(db: SqlDatabase): void {
       externalIds: ["abc123", "short1"],
     },
     {
+      // A playlist saved from someone else: the row for the playlist itself
+      // plus the videos inside it.
+      provider: "youtube" as const,
+      account: "you",
+      kind: "items" as const,
+      url: "https://www.youtube.com/playlist?list=PLdb",
+      context: { playlistId: "PLdb", collection: "Database Internals" },
+      body: fixture("youtube/playlist-page-header-old.json"),
+      externalIds: ["playlist:PLdb", "vid1"],
+    },
+    {
       provider: "substack" as const,
       account: "you",
       kind: "items" as const,
@@ -250,6 +261,30 @@ export function seedFixtures(db: SqlDatabase): void {
       image: "/demo-thumbnails/distributed-systems.jpg",
       url: "https://example.com/linkosh-demo/7",
       posterName: "Demo Interface Lab",
+      posterHandle: "",
+    },
+    {
+      // Title and collection deliberately match: the meta line must print the
+      // name once, not twice.
+      provider: "youtube",
+      externalId: "playlist:PLdb",
+      title: "Database Internals",
+      publication: "",
+      summary: "Talks on storage engines, query planners, and the trade-offs behind them.",
+      image: "/demo-thumbnails/distributed-systems.jpg",
+      url: "https://example.com/linkosh-demo/9",
+      posterName: "Demo Systems Conference",
+      posterHandle: "demosystems",
+    },
+    {
+      provider: "youtube",
+      externalId: "vid1",
+      title: "How B-trees actually stay balanced",
+      publication: "",
+      summary: "",
+      image: "/demo-thumbnails/knowledge-cards.jpg",
+      url: "https://example.com/linkosh-demo/10",
+      posterName: "Demo Systems Conference",
       posterHandle: "",
     },
     {

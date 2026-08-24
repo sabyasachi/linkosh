@@ -114,6 +114,30 @@ test("metaParts replaces YouTube's frozen age with a dynamic relative date", () 
   assert.deepEqual(metaParts({ kind: "story" }), []);
 });
 
+test("metaParts labels a playlist row and drops the collection that repeats its title", () => {
+  const parts = metaParts(
+    {
+      provider: "youtube",
+      kind: "playlist",
+      title: "Database Internals",
+      stats: { videos: "24 videos", views: "12,043 views", age: "Updated today" },
+      // The playlist carries its own name as its collection — that is what
+      // groups it with the videos inside it, but printing it here would just
+      // repeat the title sitting directly above.
+      collection: ["Database Internals"],
+    },
+    { providerLabel: "YouTube", now: Date.parse("2026-08-24T12:00:00Z") }
+  );
+  assert.deepEqual(parts, ["YouTube", "Playlist", "24 videos · 12,043 views · Updated today"]);
+
+  // A video inside that playlist still shows the collection.
+  const video = metaParts(
+    { provider: "youtube", kind: "video", title: "B-trees explained", collection: ["Database Internals"] },
+    { providerLabel: "YouTube" }
+  );
+  assert.deepEqual(video, ["YouTube", "Database Internals"]);
+});
+
 test("YouTube's relative publication date advances without another sync", () => {
   const item = {
     provider: "youtube" as const,

@@ -221,7 +221,11 @@ function ItemRow({
   const poster = formatPoster(item);
   const summary = hackerNewsCounts(item) ? "" : item.summary;
   const publication = item.publication || "";
-  const posterTitle = Boolean(poster && item.title);
+  // A playlist is identified by its own name, so it leads and the owning
+  // channel follows — the reverse of a video row, where you look for the
+  // channel first and the title is one of many under it.
+  const titlePoster = Boolean(poster && item.title) && item.kind === "playlist";
+  const posterTitle = Boolean(poster && item.title) && !titlePoster;
   // Title-less rows are posts: their author bio/headline or secondary
   // context is noise in the list, so it moves to a tooltip on the poster
   // line. Rows with a real title (stories, videos, newsletters) keep the
@@ -244,7 +248,7 @@ function ItemRow({
   const meta = metaParts(item, { providerLabel }).join(" · ");
 
   return (
-    <li class={`item${posterTitle ? " poster-title-item" : ""}`}>
+    <li class={`item${posterTitle ? " poster-title-item" : ""}${titlePoster ? " title-poster-item" : ""}`}>
       <a href={item.url || "#"} target="_blank" rel="noreferrer">
         <Thumbnail item={item} />
         <div class="text">
@@ -953,7 +957,7 @@ export function App({ runtime }: { runtime: Runtime }) {
           id="search"
           type="search"
           placeholder="Filter saved items…"
-          title='Full-text search. Supports FTS5 filters, e.g. kind:short, collection:"watch later", poster_name:"jane doe", poster_handle:jane, cats AND dogs, NOT reel — plus is:starred to search favorites only'
+          title='Full-text search. Supports FTS5 filters, e.g. kind:short, kind:playlist, collection:"watch later", poster_name:"jane doe", poster_handle:jane, cats AND dogs, NOT reel — plus is:starred to search favorites only'
           value={query}
           onInput={(e) => {
             const text = (e.currentTarget as HTMLInputElement).value;

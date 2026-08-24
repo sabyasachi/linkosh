@@ -1,0 +1,70 @@
+{
+  "header": {
+    "playlistHeaderRenderer": {
+      "playlistId": "PLdb",
+      "title": { "simpleText": "Database Internals" },
+      "descriptionText": { "simpleText": "Talks on storage engines and query planners." },
+      "numVideosText": { "runs": [{ "text": "24" }, { "text": " videos" }] },
+      "viewCountText": { "simpleText": "12,043 views" },
+      "ownerText": {
+        "runs": [
+          {
+            "text": "Some Conference",
+            "navigationEndpoint": {
+              "browseEndpoint": {
+                "browseId": "UCxxxx",
+                "canonicalBaseUrl": "/@someconf"
+              }
+            }
+          }
+        ]
+      },
+      "playlistHeaderBanner": {
+        "heroPlaylistThumbnailRenderer": {
+          "thumbnail": {
+            "thumbnails": [
+              { "url": "https://i.ytimg.com/pl/120.jpg", "width": 120 },
+              { "url": "https://i.ytimg.com/pl/336.jpg", "width": 336 }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "contents": {
+    "twoColumnBrowseResultsRenderer": {
+      "tabs": [
+        {
+          "tabRenderer": {
+            "content": {
+              "sectionListRenderer": {
+                "contents": [
+                  {
+                    "itemSectionRenderer": {
+                      "contents": [
+                        {
+                          "playlistVideoListRenderer": {
+                            "contents": [
+                              {
+                                "playlistVideoRenderer": {
+                                  "videoId": "vid1",
+                                  "title": { "simpleText": "B-trees explained" },
+                                  "shortBylineText": { "simpleText": "Some Conference" },
+                                  "lengthSeconds": "1800"
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

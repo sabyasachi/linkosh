@@ -23,18 +23,22 @@ export function formatCollection(collection: string[] | undefined): string {
   return (collection ?? []).filter(Boolean).join(", ");
 }
 
+/** Stats keys rendered value-only (the value carries its own unit word);
+ *  anything else renders as "key: value". */
+const KNOWN_STAT_KEYS = ["videos", "views", "age", "info", "points", "comments"];
+
 export function formatStats(
   stats: Record<string, string> | undefined,
   { hideAge = false }: { hideAge?: boolean } = {}
 ): string {
   if (!stats) return "";
   const parts: string[] = [];
-  for (const key of ["views", "age", "info", "points", "comments"]) {
+  for (const key of KNOWN_STAT_KEYS) {
     if (key === "age" && hideAge) continue;
     if (stats[key]) parts.push(String(stats[key]));
   }
   for (const [key, value] of Object.entries(stats)) {
-    if (["views", "age", "info", "points", "comments"].includes(key) || value == null || value === "") continue;
+    if (KNOWN_STAT_KEYS.includes(key) || value == null || value === "") continue;
     parts.push(`${key}: ${value}`);
   }
   return parts.join(" · ");
@@ -91,7 +95,13 @@ export function formatRelativeDate(ts: number | null | undefined, now: number = 
 export type MetaItem = Pick<ParsedItem, "kind" | "duration" | "stats" | "collection"> &
   Partial<Pick<SavedItem, "provider" | "bookmarkedAt" | "publishedAt">> & {
     summary?: string | null;
+    title?: string | null;
   };
+
+/** Kinds worth naming in the meta line: ones the row's own text doesn't
+ *  already make obvious. A video row says video by looking like one; a
+ *  playlist row needs the word, and a Short is a video of a specific sort. */
+const KIND_LABELS: Record<string, string> = { short: "Short", playlist: "Playlist" };
 
 /** Older HN rows stored story counters in summary, whose list style is larger
  *  than metadata. Keep recognizing those rows so the UI fix needs no resync. */
@@ -134,12 +144,17 @@ export function metaParts(
   const stats = legacyHackerNewsCounts
     ? { ...item.stats, info: legacyHackerNewsCounts }
     : item.stats;
+  // A collection label identical to the title is redundant — a playlist row
+  // carries its own name as its collection, which is what groups it with the
+  // videos inside it.
+  const title = (item.title || "").trim().toLowerCase();
+  const collection = (item.collection ?? []).filter((c) => c.trim().toLowerCase() !== title);
   return [
     providerLabel,
-    item.kind === "short" ? "Short" : "",
+    KIND_LABELS[item.kind ?? ""] ?? "",
     item.duration ? formatDuration(item.duration) : "",
     formatStats(stats, { hideAge: hasDynamicYouTubeAge }),
-    formatCollection(item.provider === "hackernews" ? [] : item.collection),
+    formatCollection(item.provider === "hackernews" ? [] : collection),
     formatSavedDate(item, now),
   ].filter(Boolean);
 }
