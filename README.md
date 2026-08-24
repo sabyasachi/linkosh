@@ -23,9 +23,10 @@ are comfortable trying a developer build, feedback and bug reports are very
 welcome. Code contributions are not being accepted at the moment — see
 [Contributing](#contributing).
 
-## Demo
+## Demo Video
 
-[Watch Linkosh in action on YouTube](https://youtu.be/2I2eKJIbs0I?si=oeJ_daxxhIQqhoKY).
+<a href="http://www.youtube.com/watch?feature=player_embedded&v=2I2eKJIbs0I" target="_blank"><img src="http://img.youtube.com/vi/2I2eKJIbs0I/0.jpg" 
+alt="Watch Linkosh in action on YouTube" width="240" height="180" border="10" /></a>
 
 ## Screenshots
 
