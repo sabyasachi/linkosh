@@ -117,6 +117,11 @@ jobs:
       - name: Attach ZIP to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          # This job has no actions/checkout — it only needs the artifact — so
+          # there is no git remote for gh to infer the repository from, and it
+          # exits with "not a git repository". GH_REPO supplies it directly,
+          # which is cheaper than cloning the repo just to run gh.
+          GH_REPO: ${{ github.repository }}
           ARCHIVE: ${{ needs.build.outputs.archive }}
         shell: bash
         run: |
