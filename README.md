@@ -70,13 +70,28 @@ mode for an extension installed outside the Web Store.
 
 1. Download `linkosh-chrome-v*.zip` from the latest
    [GitHub release](https://github.com/sabyasachi/linkosh/releases/latest).
-2. Extract the ZIP into a permanent folder named `linkosh-extension`. Chrome
+2. Optionally, verify the download before trusting it with your logged-in
+   sessions. Every release ZIP is built by
+   [GitHub Actions](.github/workflows/build-extension.yml) and carries a
+   provenance attestation tying it to this repository, that workflow, and the
+   commit it was built from. With the
+   [GitHub CLI](https://cli.github.com/) installed, check it:
+
+   ```sh
+   gh attestation verify --repo sabyasachi/linkosh linkosh-chrome-v0.1.0.zip
+   ```
+
+   The release also has a `.sha256` file, but it sits beside the ZIP on the
+   same page: it detects a corrupted or truncated download, not a tampered
+   release. The attestation is the check that establishes where the ZIP came
+   from.
+3. Extract the ZIP into a permanent folder named `linkosh-extension`. Chrome
    continues to use that exact folder after installation, so do not rename,
    move, or delete it.
-3. Open `chrome://extensions` in Chrome.
-4. Turn on **Developer mode** in the top-right corner.
-5. Click **Load unpacked** and select the extracted folder.
-6. Pin Linkosh from Chrome's Extensions menu if you want it to stay visible in
+4. Open `chrome://extensions` in Chrome.
+5. Turn on **Developer mode** in the top-right corner.
+6. Click **Load unpacked** and select the extracted folder.
+7. Pin Linkosh from Chrome's Extensions menu if you want it to stay visible in
    the toolbar.
 
 #### Update a prebuilt installation
