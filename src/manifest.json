@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Linkosh",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fetch and list your saved items from LinkedIn, Instagram, YouTube, Hacker News, X, Facebook and Substack (more services coming).",
   "permissions": ["storage", "cookies", "offscreen", "scripting"],
   "host_permissions": [

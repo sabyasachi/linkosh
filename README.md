@@ -78,7 +78,7 @@ mode for an extension installed outside the Web Store.
    [GitHub CLI](https://cli.github.com/) installed, check it:
 
    ```sh
-   gh attestation verify --repo sabyasachi/linkosh linkosh-chrome-v0.1.0.zip
+   gh attestation verify --repo sabyasachi/linkosh linkosh-chrome-v0.1.1.zip
    ```
 
    The release also has a `.sha256` file, but it sits beside the ZIP on the
