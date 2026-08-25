@@ -28,20 +28,6 @@ welcome. Code contributions are not being accepted at the moment — see
 <a href="http://www.youtube.com/watch?feature=player_embedded&v=2I2eKJIbs0I" target="_blank"><img src="http://img.youtube.com/vi/2I2eKJIbs0I/0.jpg" 
 alt="Watch Linkosh in action on YouTube" width="240" height="180" border="10" /></a>
 
-## Screenshots
-
-Browse saved items from every supported service in one library.
-
-![Linkosh library showing saved items from several services](docs/screenshots/library-overview.jpg)
-
-| Search by meaning | Filter with precise queries |
-| --- | --- |
-| ![Hybrid search results for writing](docs/screenshots/hybrid-search.jpg) | ![Text search filtered to the Watch Later collection](docs/screenshots/collection-filter.jpg) |
-
-Star favorites and return to them in one click.
-
-![Starred view listing only starred items](docs/screenshots/starred-view.jpg)
-
 ## Privacy at a glance
 
 Linkosh is designed to work without a Linkosh account or server.
