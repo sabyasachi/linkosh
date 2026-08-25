@@ -4,16 +4,29 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - build-process
+      - main
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - main
 
-permissions:
-  contents: write
+# Default-deny: each job opts into exactly what it needs, so ordinary PR and
+# branch builds never hold a token that could write a release.
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Superseded PR pushes are worth cancelling; tag and main builds are not.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      archive: ${{ steps.package.outputs.archive }}
     steps:
       - name: Check out the repository
         uses: actions/checkout@v7
@@ -45,7 +58,12 @@ jobs:
             exit 1
           fi
 
-          (cd dist/src && zip -q -r "${GITHUB_WORKSPACE}/${archive}" .)
+          # Zip the *contents* of dist/src, so manifest.json lands at the ZIP
+          # root — the README's install steps depend on there being no wrapper
+          # directory. -X drops uid/gid and extra attributes; the archive is
+          # still not byte-reproducible (mtimes vary run to run).
+          (cd dist/src && zip -q -r -X "${GITHUB_WORKSPACE}/${archive}" .)
+          sha256sum "${archive}" > "${archive}.sha256"
           echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload workflow artifact
@@ -55,15 +73,51 @@ jobs:
           path: dist/src/
           if-no-files-found: error
 
+      # The release job publishes these exact bytes rather than rebuilding, so
+      # what ships is what `npm test` ran against.
+      - name: Upload release ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          name: linkosh-chrome-zip
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release and upload assets
+      id-token: write # OIDC token the attestation is signed against
+      attestations: write
+    steps:
+      - name: Download release ZIP
+        uses: actions/download-artifact@v8
+        with:
+          name: linkosh-chrome-zip
+
+      # Binds the ZIP's digest to this repo, workflow and commit. This — not
+      # the .sha256, which travels beside the ZIP — is what lets a user verify
+      # a download really came from here (`gh attestation verify`).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: ${{ needs.build.outputs.archive }}
+
       - name: Attach ZIP to GitHub Release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-          ARCHIVE: ${{ steps.package.outputs.archive }}
+          ARCHIVE: ${{ needs.build.outputs.archive }}
         shell: bash
         run: |
+          # Created as a draft on purpose: a human reviews the generated notes
+          # and the attached ZIP, then publishes. Until then GitHub does not
+          # serve it as /releases/latest.
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${ARCHIVE}" --clobber
+            gh release upload "${GITHUB_REF_NAME}" "${ARCHIVE}" "${ARCHIVE}.sha256" --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" "${ARCHIVE}" --verify-tag --generate-notes --title "Linkosh ${GITHUB_REF_NAME}"
+            gh release create "${GITHUB_REF_NAME}" "${ARCHIVE}" "${ARCHIVE}.sha256" \
+              --draft --verify-tag --generate-notes --title "Linkosh ${GITHUB_REF_NAME}"
           fi
