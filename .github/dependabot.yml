@@ -1,0 +1,20 @@
+# SHA-pinned actions do not pick up upstream security fixes on their own, which
+# is the standing cost of pinning (see the note in workflows/build-extension.yml).
+# Dependabot pays it: it bumps each pin and rewrites the trailing # vX.Y.Z
+# comment, so the pins stay current without reintroducing mutable tags.
+#
+# Only github-actions is tracked. The npm devDependencies are types-only and the
+# extension ships zero runtime dependencies by design, so there is no npm
+# dependency surface worth automating here.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns:
+          - "*"

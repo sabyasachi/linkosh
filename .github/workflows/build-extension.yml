@@ -20,6 +20,14 @@ concurrency:
   # Superseded PR pushes are worth cancelling; tag and main builds are not.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Actions are pinned to full commit SHAs, not tags. A floating major like @v7
+# is a mutable ref that maintainers move on every patch release, so it is not a
+# fixed version — retagging is how the tj-actions/changed-files compromise
+# (March 2025) reached ~23k repos. That matters most for the release job below,
+# which holds attestations: write — a moved tag there could get a malicious ZIP
+# attested as genuine, defeating the verification the README tells users to
+# trust. The trailing comment on each pin is the human-readable version;
+# .github/dependabot.yml keeps the SHAs current.
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,10 +37,10 @@ jobs:
       archive: ${{ steps.package.outputs.archive }}
     steps:
       - name: Check out the repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -67,7 +75,7 @@ jobs:
           echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload workflow artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linkosh-chrome-extension
           path: dist/src/
@@ -76,7 +84,7 @@ jobs:
       # The release job publishes these exact bytes rather than rebuilding, so
       # what ships is what `npm test` ran against.
       - name: Upload release ZIP
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linkosh-chrome-zip
           path: |
@@ -94,7 +102,7 @@ jobs:
       attestations: write
     steps:
       - name: Download release ZIP
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: linkosh-chrome-zip
 
@@ -102,7 +110,7 @@ jobs:
       # the .sha256, which travels beside the ZIP — is what lets a user verify
       # a download really came from here (`gh attestation verify`).
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ needs.build.outputs.archive }}
 
